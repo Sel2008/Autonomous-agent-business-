@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { supabaseConfigured, supabaseRequest } from "@/lib/supabase";
+import { supabaseConfigured, supabaseRequest } from "../../../lib/supabase";
 
 const opportunities = [
   { id:"lead-research", name:"AI-assisted local-business lead research", model:"Service", capital:"R0 to start", status:"RESEARCH", why:"Find public business prospects, identify obvious gaps, prepare personalized outreach drafts, and let the owner approve/send them.", next_action:"Build a verified lead record before outreach." },
