@@ -2,12 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 
 const COOKIE_NAME = "aba_owner_session";
 
-function fromBase64Url(value: string) {
-  const padded = value.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((value.length + 3) % 4);
-  const binary = atob(padded);
-  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
-}
-
 function toBase64Url(bytes: ArrayBuffer) {
   const binary = String.fromCharCode(...new Uint8Array(bytes));
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
@@ -28,7 +22,7 @@ async function validSession(token: string | undefined, secret: string | undefine
 
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
-  if (pathname.startsWith("/api/auth")) return NextResponse.next();
+  if (pathname === "/login" || pathname.startsWith("/api/auth")) return NextResponse.next();
   if (pathname.startsWith("/_next/") || pathname === "/favicon.ico") return NextResponse.next();
 
   const authenticated = await validSession(request.cookies.get(COOKIE_NAME)?.value, process.env.AUTH_SECRET);
