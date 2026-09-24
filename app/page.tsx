@@ -36,12 +36,23 @@ const initialEvidence:Evidence[]=[
 
 export default function Home(){
  const [tasks,setTasks]=useState<Task[]>(initialTasks),[agentAction,setAgentAction]=useState<any>(null),[approvals,setApprovals]=useState<Approval[]>([]),[evidence,setEvidence]=useState<Evidence[]>(initialEvidence),[selected,setSelected]=useState<Opportunity|null>(null),[tab,setTab]=useState<"overview"|"evidence"|"scoring">("overview"),[saved,setSaved]=useState(false),[verification,setVerification]=useState<Record<string,Verification>>({}),[dbStatus,setDbStatus]=useState<"checking"|"connected"|"local">("checking");
- useEffect(()=>{(async()=>{try{const r=await fetch("/api/ledger",{cache:"no-store"});const s=await r.json();if(s.configured){if(Array.isArray(s.tasks)&&s.tasks.length)setTasks(s.tasks.map((x: any)=>({id:x.id,title:x.title,status:x.status,opportunityId:x.opportunity_id})));if(Array.isArray(s.approvals))setApprovals(s.approvals);if(Array.isArray(s.evidence)&&s.evidence.length)setEvidence(s.evidence.map((x:any)=>({id:x.id,opportunityId:x.opportunity_id,type:x.type,claim:x.claim,source:x.source,checked:x.checked_on,quality:x.quality,notes:x.notes||""})));if(Array.isArray(s.verification)){const m:Record<string,Verification>={};s.verification.forEach((x:any)=>{m[x.opportunity_id]={demand:x.demand,access:x.access,margin:x.margin,repeatability:x.repeatability,risk:x.risk}});setVerification(m)}setDbStatus("connected")}else setDbStatus("local")}catch{setDbStatus("local")}})(); (async()=>{try{const r=await fetch("/api/agent/next-action",{cache:"no-store"});const s=await r.json();setAgentAction(s.action)}catch{}})()},[]);
+ useEffect(()=>{(async()=>{try{const r=await fetch("/api/ledger",{cache:"no-store"});const s=await r.json();if(s.configured){if(Array.isArray(s.tasks)&&s.tasks.length)setTasks(s.tasks.map((x: any):Task=>({id:x.id,title:x.title,status:x.status,opportunityId:x.opportunity_id})));if(Array.isArray(s.approvals))setApprovals(s.approvals);if(Array.isArray(s.evidence)&&s.evidence.length)setEvidence(s.evidence.map((x:any)=>({id:x.id,opportunityId:x.opportunity_id,type:x.type,claim:x.claim,source:x.source,checked:x.checked_on,quality:x.quality,notes:x.notes||""})));if(Array.isArray(s.verification)){const m:Record<string,Verification>={};s.verification.forEach((x:any)=>{m[x.opportunity_id]={demand:x.demand,access:x.access,margin:x.margin,repeatability:x.repeatability,risk:x.risk}});setVerification(m)}setDbStatus("connected")}else setDbStatus("local")}catch{setDbStatus("local")}})(); (async()=>{try{const r=await fetch("/api/agent/next-action",{cache:"no-store"});const s=await r.json();setAgentAction(s.action)}catch{}})()},[]);
  useEffect(()=>{try{localStorage.setItem("aba-mvp-v2",JSON.stringify({tasks,approvals,evidence,verification}));setSaved(true);const t=setTimeout(()=>setSaved(false),900);return()=>clearTimeout(t)}catch{}},[tasks,approvals,evidence,verification]);
  const complete=tasks.filter(t=>t.status==="COMPLETE").length,pending=approvals.filter(a=>a.status==="PENDING").length,checked=evidence.filter(e=>e.quality!=="UNVERIFIED").length;
  const nextTask=useMemo(()=>tasks.find(t=>t.status!=="COMPLETE"),[tasks]);
- async function sync(action:string,payload:any){try{await fetch("/api/ledger",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,payload})})}catch{} } 
- function advanceTask(id:string){setTasks(x=>{const next=x.map(t=>t.id===id?{...t,status:t.status==="READY"?"IN PROGRESS":t.status==="IN PROGRESS"?"COMPLETE":t.status}:t);const t=next.find(t=>t.id===id);if(t)sync("task",{id:t.id,status:t.status});return next})}
+ async function sync(action:string,payload:any){try{await fetch("/api/ledger",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,payload})})}catch{}}
+ function advanceTask(id:string){
+   setTasks(x=>{
+     const next=x.map((t):Task=>{
+       if(t.id!==id)return t;
+       const status:Task["status"]=t.status==="READY"?"IN PROGRESS":t.status==="IN PROGRESS"?"COMPLETE":t.status;
+       return {...t,status};
+     });
+     const t=next.find(t=>t.id===id);
+     if(t)sync("task",{id:t.id,status:t.status});
+     return next;
+   });
+ }
  function requestApproval(){const a={id:crypto.randomUUID(),title:"Owner approval: proceed with the first verified business experiment",tier:"T2" as const,status:"PENDING" as const};setApprovals(x=>[a,...x]);sync("approval-create",a)}
  function decideApproval(id:string,status:"APPROVED"|"REJECTED"){setApprovals(x=>x.map(a=>a.id===id?{...a,status}:a));sync("approval-decide",{id,status})}
  function addEvidence(opportunityId:string){const e={id:crypto.randomUUID(),opportunityId,type:"NOTE",claim:"New evidence record awaiting verification",source:"Enter source URL or identifier",checked:new Date().toISOString().slice(0,10),quality:"UNVERIFIED" as const,notes:"Verify before using this record for a business decision."};setEvidence(x=>[e,...x]);sync("evidence-create",{id:e.id,opportunity_id:e.opportunityId,type:e.type,claim:e.claim,source:e.source,checked_on:e.checked,quality:e.quality,notes:e.notes})}
