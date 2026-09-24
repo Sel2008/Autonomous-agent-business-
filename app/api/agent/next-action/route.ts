@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { getNextAction } from "../../../lib/agent-core";
-import { supabaseConfigured, supabaseRequest } from "../../../lib/supabase";
+import { getNextAction } from "../../../../lib/agent-core";
+import { supabaseConfigured, supabaseRequest } from "../../../../lib/supabase";
 
 const fallback = {
   tasks: [
