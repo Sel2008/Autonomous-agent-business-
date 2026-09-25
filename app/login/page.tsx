@@ -1,9 +1,9 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, Suspense, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
   const [password, setPassword] = useState("");
@@ -54,5 +54,13 @@ export default function LoginPage() {
         </button>
       </form>
     </main>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<main style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 24 }}>Loading…</main>}>
+      <LoginForm />
+    </Suspense>
   );
 }
