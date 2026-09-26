@@ -8,7 +8,8 @@ export function supabaseConfigured() {
 export async function supabaseRequest(path: string, init: RequestInit = {}) {
   if (!url || !key) throw new Error("Supabase is not configured");
 
-  const response = await fetch(url + "/rest/v1/" + path, {
+  const baseUrl = url.replace(/\/+$/, "").replace(/\/rest\/v1$/, "");
+  const response = await fetch(baseUrl + "/rest/v1/" + path, {
     ...init,
     headers: {
       apikey: key,
