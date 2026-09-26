@@ -25,8 +25,10 @@ export async function GET() {
       supabaseRequest("opportunity_verification?select=*"),
     ]);
     return NextResponse.json({ configured:true, opportunities:o, tasks:t, approvals:a, evidence:e, verification:v });
-  } catch {
-    return NextResponse.json({ configured:false, opportunities, tasks, approvals:[], evidence:[], verification:{} });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Database read error";
+    console.error("Supabase ledger GET failed:", message);
+    return NextResponse.json({ configured:false, db_error:message, opportunities, tasks, approvals:[], evidence:[], verification:{} });
   }
 }
 
