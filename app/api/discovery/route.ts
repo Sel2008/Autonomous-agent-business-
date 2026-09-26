@@ -34,15 +34,12 @@ const outputSchema = {
           pursuitPriority: { type: "number" },
           confidence: { type: "number" },
           demandEvidence: { type: "string" },
-          accessEvidence: { type: "string" },
-          economicsEvidence: { type: "string" },
-          repeatabilityEvidence: { type: "string" },
-          riskEvidence: { type: "string" },
+          evidence: { type: "string" },
           risks: { type: "array", items: { type: "string" } },
           nextValidation: { type: "string" },
           sourceUrls: { type: "array", items: { type: "string" } }
         },
-        required: ["name","opportunityType","market","rationale","pursuitPriority","confidence","demandEvidence","accessEvidence","economicsEvidence","repeatabilityEvidence","riskEvidence","risks","nextValidation","sourceUrls"]
+        required: ["name","opportunityType","market","rationale","pursuitPriority","confidence","evidence","risks","nextValidation","sourceUrls"]
       }
     }
   },
@@ -169,11 +166,11 @@ Rank candidates by a transparent pursuit-priority assessment based on the eviden
             rationale:String(candidate.rationale || ""),
             pursuit_priority:Math.max(0, Math.min(100, Number(candidate.pursuitPriority) || 0)),
             confidence:Math.max(0, Math.min(100, Number(candidate.confidence) || 0)),
-            demand_evidence:String(candidate.demandEvidence || ""),
-            access_evidence:String(candidate.accessEvidence || ""),
-            economics_evidence:String(candidate.economicsEvidence || ""),
-            repeatability_evidence:String(candidate.repeatabilityEvidence || ""),
-            risk_evidence:String(candidate.riskEvidence || ""),
+            demand_evidence:String(candidate.evidence || ""),
+            access_evidence:"",
+            economics_evidence:"",
+            repeatability_evidence:"",
+            risk_evidence:Array.isArray(candidate.risks) ? candidate.risks.map(String).join("; ") : "",
             risks:Array.isArray(candidate.risks) ? candidate.risks.map(String) : [],
             next_validation:String(candidate.nextValidation || ""),
             source_urls:Array.isArray(candidate.sourceUrls) ? candidate.sourceUrls.map(String) : []
