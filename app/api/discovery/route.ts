@@ -2,9 +2,16 @@ import { NextResponse } from "next/server";
 import { supabaseConfigured, supabaseRequest } from "../../../lib/supabase";
 
 type Candidate = {
-  name: string; opportunityType: string; market: string; rationale: string;
-  pursuitPriority: number; confidence: number; evidence: string; risks: string[];
-  nextValidation: string; sourceUrls: string[];
+  name: string;
+  pursuitPriority: number;
+  confidence: number;
+  demandEvidence: string;
+  accessEvidence: string;
+  economicsEvidence: string;
+  repeatabilityEvidence: string;
+  riskEvidence: string;
+  risks: string[];
+  nextValidation: string;
 };
 
 const outputSchema = {
@@ -12,10 +19,17 @@ const outputSchema = {
   properties: {
     summary: { type: "string" },
     candidates: { type: "array", items: { type: "object", properties: {
-      name: { type: "string" }, rationale: { type: "string" }, pursuitPriority: { type: "number" },
-      confidence: { type: "number" }, evidence: { type: "string" }, risks: { type: "array", items: { type: "string" } },
-      nextValidation: { type: "string" }, sourceUrls: { type: "array", items: { type: "string" } }
-    }, required: ["name","rationale","pursuitPriority","confidence","evidence","risks","nextValidation","sourceUrls"] } }
+      name: { type: "string" },
+      pursuitPriority: { type: "number" },
+      confidence: { type: "number" },
+      demandEvidence: { type: "string" },
+      accessEvidence: { type: "string" },
+      economicsEvidence: { type: "string" },
+      repeatabilityEvidence: { type: "string" },
+      riskEvidence: { type: "string" },
+      risks: { type: "array", items: { type: "string" } },
+      nextValidation: { type: "string" }
+    }, required: ["name","pursuitPriority","confidence","demandEvidence","accessEvidence","economicsEvidence","repeatabilityEvidence","riskEvidence","risks","nextValidation"] } }
   }, required: ["summary","candidates"]
 };
 
@@ -23,6 +37,18 @@ function normalizeScore(value: unknown): number {
   const n = Number(value); if (!Number.isFinite(n)) return 0;
   const scaled = n >= 0 && n <= 1 ? n * 100 : n;
   return Math.round(Math.max(0, Math.min(100, scaled)));
+}
+
+function extractSourceUrls(candidate: Candidate): string[] {
+  const fields = [
+    candidate.demandEvidence,
+    candidate.accessEvidence,
+    candidate.economicsEvidence,
+    candidate.repeatabilityEvidence,
+    candidate.riskEvidence
+  ];
+  const urls = fields.flatMap((field) => String(field || "").match(/https?:\\/\\/[^\\s)\\],]+/g) || []);
+  return Array.from(new Set(urls));
 }
 
 export async function GET() {
@@ -54,7 +80,7 @@ export async function POST(req: Request) {
     const marketScope = String(body.marketScope || "Global").trim();
     if (!goal) return NextResponse.json({ ok:false, error:"A research goal is required." }, { status:400 });
 
-    const prompt = `Research goal: ${goal}\nMarket scope: ${marketScope}\n\nThis is a RESEARCH-ONLY test. Do not recommend contacting anyone, spending money, creating accounts, making commitments, or taking irreversible actions.\n\nFind concrete business opportunities or service opportunities that fit the goal. Investigate each candidate across: demand, customer access, economics/monetization, repeatability, risks/competition/compliance. Rank candidates by a transparent pursuit-priority assessment based on evidence, not unsupported prediction of success. Separate evidence from inference. If evidence is weak or conflicting, say so. Include source URLs for material claims. The result should help an owner decide what deserves the next validation step.`;
+    const prompt = `Research goal: ${goal}\nMarket scope: ${marketScope}\n\nThis is a RESEARCH-ONLY test. Do not recommend contacting anyone, spending money, creating accounts, making commitments, or taking irreversible actions.\n\nFind concrete business or service opportunities that fit the goal. For every candidate, investigate FIVE separate dimensions: (1) demand, (2) customer access, (3) economics/monetization, (4) repeatability, and (5) risks/competition/compliance. For each dimension, clearly separate sourced evidence from inference and state when evidence is weak, conflicting, indirect, or missing.\n\nSet pursuitPriority from 0-100 using only the strength and completeness of the evidence across those five dimensions. Set confidence from 0-100 based on source quality, independence/corroboration, recency where relevant, and how much of the assessment is actually evidenced. Do not use arbitrary low scores just because this is an early test. Do not treat the priority score as a prediction of business success.\n\nList concrete risks separately and give exactly one nextValidation step that would most efficiently resolve the biggest remaining uncertainty. Put the URLs of the sources you relied on inside the relevant evidence text (for example, "Source: https://..."), because the response schema is intentionally limited. Do not invent sources. The result should help an owner decide what deserves further investigation, while preserving uncertainty rather than hiding it.`;
 
     const response = await fetch("https://api.exa.ai/search", {
       method:"POST", headers:{ "x-api-key":key, "Content-Type":"application/json" },
@@ -89,13 +115,18 @@ export async function POST(req: Request) {
       try {
         if (candidates.length > 0) {
           const rows = candidates.map((candidate) => ({
-            run_id:runId, name:String(candidate.name || "Unnamed opportunity"), opportunity_type:String(candidate.opportunityType || ""),
-            market:String(candidate.market || marketScope), rationale:String(candidate.rationale || ""),
-            pursuit_priority:normalizeScore(candidate.pursuitPriority), confidence:normalizeScore(candidate.confidence),
-            demand_evidence:String(candidate.evidence || ""), access_evidence:"", economics_evidence:"", repeatability_evidence:"",
-            risk_evidence:Array.isArray(candidate.risks) ? candidate.risks.map(String).join("; ") : "",
-            risks:Array.isArray(candidate.risks) ? candidate.risks.map(String) : [], next_validation:String(candidate.nextValidation || ""),
-            source_urls:Array.isArray(candidate.sourceUrls) ? candidate.sourceUrls.map(String) : []
+            run_id:runId, name:String(candidate.name || "Unnamed opportunity"), opportunity_type:"", market:marketScope,
+            rationale:String(candidate.demandEvidence || ""),
+            pursuit_priority:normalizeScore(candidate.pursuitPriority),
+            confidence:normalizeScore(candidate.confidence),
+            demand_evidence:String(candidate.demandEvidence || ""),
+            access_evidence:String(candidate.accessEvidence || ""),
+            economics_evidence:String(candidate.economicsEvidence || ""),
+            repeatability_evidence:String(candidate.repeatabilityEvidence || ""),
+            risk_evidence:String(candidate.riskEvidence || ""),
+            risks:Array.isArray(candidate.risks) ? candidate.risks.map(String) : [],
+            next_validation:String(candidate.nextValidation || ""),
+            source_urls:extractSourceUrls(candidate)
           }));
           await supabaseRequest("research_candidates", { method:"POST", body:JSON.stringify(rows), headers:{"Prefer":"return=minimal"} });
         }
