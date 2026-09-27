@@ -47,7 +47,7 @@ function extractSourceUrls(candidate: Candidate): string[] {
     candidate.repeatabilityEvidence,
     candidate.riskEvidence
   ];
-  const urls = fields.flatMap((field) => String(field || "").match(/https?:\\/\\/[^\\s)\\],]+/g) || []);
+  const urls = fields.flatMap((field) => String(field || "").match(/https?:\/\/[^\s)\],]+/g) || []);
   return Array.from(new Set(urls));
 }
 
