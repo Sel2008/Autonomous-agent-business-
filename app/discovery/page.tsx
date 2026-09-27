@@ -10,6 +10,8 @@ type Candidate = {
   nextValidation:string; sourceUrls:string[];
 };
 
+type Grounding = { title?: string; url?: string; source?: string };
+
 export default function DiscoveryPage(){
   const [goal,setGoal]=useState("Find viable zero-capital business or service opportunities that have enough public evidence to justify further validation.");
   const [marketScope,setMarketScope]=useState("Global");
@@ -17,15 +19,17 @@ export default function DiscoveryPage(){
   const [error,setError]=useState("");
   const [summary,setSummary]=useState("");
   const [candidates,setCandidates]=useState<Candidate[]>([]);
+  const [grounding,setGrounding]=useState<Grounding[]>([]);
 
   async function run(){
-    setLoading(true); setError(""); setCandidates([]); setSummary("");
+    setLoading(true); setError(""); setCandidates([]); setSummary(""); setGrounding([]);
     try{
       const r=await fetch("/api/discovery",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({goal,marketScope})});
       const data=await r.json();
       if(!r.ok || !data.ok) throw new Error(data.error||"Discovery failed");
       setSummary(data.summary||"Research completed.");
       setCandidates(data.candidates||[]);
+      setGrounding(Array.isArray(data.grounding)?data.grounding:[]);
     }catch(e){setError(e instanceof Error?e.message:"Discovery failed")}
     finally{setLoading(false)}
   }
@@ -35,14 +39,12 @@ export default function DiscoveryPage(){
       <div><div className="brand">Autonomous Business Agent</div><div className="subbrand">Discovery + Evidence Research Test</div></div>
       <span className="badge">RESEARCH ONLY • NO EXECUTION</span>
     </header>
-
     <section className="hero">
       <div className="eyebrow">01 · DISCOVERY TEST</div>
       <h1>Find opportunities, then investigate them.</h1>
       <p>The agent does not treat your initial idea as proof. It searches public sources, compares evidence across demand, access, economics, repeatability and risk, then produces a transparent pursuit-priority assessment.</p>
       <div className="notice"><strong>Execution is OFF.</strong> This test may research and recommend a next validation step, but it will not contact businesses, create accounts, spend money, accept terms or take irreversible actions.</div>
     </section>
-
     <section className="section card">
       <div className="eyebrow">02 · MISSION INPUT</div>
       <h2>What should the agent research?</h2>
@@ -55,9 +57,7 @@ export default function DiscoveryPage(){
       <button className="button" style={{marginTop:16}} onClick={run} disabled={loading}>{loading?"Researching…":"Start discovery + research"}</button>
       {error&&<div className="notice" style={{marginTop:14}}><strong>Research not started:</strong> {error}</div>}
     </section>
-
     {summary&&<section className="section card"><div className="eyebrow">03 · RESEARCH SYNTHESIS</div><h2>What the agent found</h2><p className="muted">{summary}</p></section>}
-
     {candidates.length>0&&<section className="section">
       <div className="eyebrow">04 · EVIDENCE-BACKED PRIORITIZATION</div>
       <h2>Candidates worth the next validation step</h2>
@@ -74,7 +74,10 @@ export default function DiscoveryPage(){
         <div className="next"><strong>Risk:</strong> {c.riskEvidence}</div>
         {c.risks?.length>0&&<div className="notice"><strong>Risks:</strong> {c.risks.join(" • ")}</div>}
         <div className="next"><strong>Next validation:</strong> {c.nextValidation}</div>
-        <div style={{marginTop:12}}><strong>Sources</strong>{c.sourceUrls?.map((u,j)=><div key={j} className="source">{u}</div>)}</div>
+        {(c.sourceUrls?.length>0 || grounding.length>0)&&<div style={{marginTop:12}}><strong>Sources</strong>
+          {c.sourceUrls?.map((u,j)=><div key={"c"+j} className="source"><a href={u} target="_blank" rel="noreferrer">{u}</a></div>)}
+          {grounding.map((g,j)=>g.url?<div key={"g"+j} className="source"><a href={g.url} target="_blank" rel="noreferrer">{g.title||g.url}</a></div>:null)}
+        </div>}
       </article>)}
       </div>
     </section>}
