@@ -20,10 +20,17 @@ export async function supabaseRequest(path: string, init: RequestInit = {}) {
     cache: "no-store",
   });
 
+  const raw = await response.text();
+
   if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(`Supabase request failed: ${response.status} ${detail}`);
+    throw new Error(`Supabase request failed: ${response.status} ${raw}`);
   }
 
-  return response.json();
+  if (!raw.trim()) return null;
+
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new Error("Supabase returned an invalid JSON response.");
+  }
 }
