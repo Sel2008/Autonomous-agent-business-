@@ -8,11 +8,7 @@ type Candidate = {
   rationale: string;
   pursuitPriority: number;
   confidence: number;
-  demandEvidence: string;
-  accessEvidence: string;
-  economicsEvidence: string;
-  repeatabilityEvidence: string;
-  riskEvidence: string;
+  evidence: string;
   risks: string[];
   nextValidation: string;
   sourceUrls: string[];
@@ -33,7 +29,6 @@ const outputSchema = {
           rationale: { type: "string" },
           pursuitPriority: { type: "number" },
           confidence: { type: "number" },
-          demandEvidence: { type: "string" },
           evidence: { type: "string" },
           risks: { type: "array", items: { type: "string" } },
           nextValidation: { type: "string" },
