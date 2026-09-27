@@ -14,6 +14,9 @@ type Candidate = {
   sourceUrls: string[];
 };
 
+// Exa Search structured output allows a maximum of 10 properties TOTAL,
+// including properties inside the candidate item. Keep the schema compact;
+// grounding supplies field-level source citations separately.
 const outputSchema = {
   type: "object",
   properties: {
@@ -24,8 +27,6 @@ const outputSchema = {
         type: "object",
         properties: {
           name: { type: "string" },
-          opportunityType: { type: "string" },
-          market: { type: "string" },
           rationale: { type: "string" },
           pursuitPriority: { type: "number" },
           confidence: { type: "number" },
@@ -34,7 +35,7 @@ const outputSchema = {
           nextValidation: { type: "string" },
           sourceUrls: { type: "array", items: { type: "string" } }
         },
-        required: ["name","opportunityType","market","rationale","pursuitPriority","confidence","evidence","risks","nextValidation","sourceUrls"]
+        required: ["name","rationale","pursuitPriority","confidence","evidence","risks","nextValidation","sourceUrls"]
       }
     }
   },
