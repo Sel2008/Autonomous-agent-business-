@@ -17,7 +17,6 @@ type Candidate = {
 const outputSchema = {
   type: "object",
   properties: {
-    summary: { type: "string" },
     candidates: { type: "array", items: { type: "object", properties: {
       name: { type: "string" },
       pursuitPriority: { type: "number" },
@@ -27,10 +26,9 @@ const outputSchema = {
       economicsEvidence: { type: "string" },
       repeatabilityEvidence: { type: "string" },
       riskEvidence: { type: "string" },
-      risks: { type: "array", items: { type: "string" } },
       nextValidation: { type: "string" }
-    }, required: ["name","pursuitPriority","confidence","demandEvidence","accessEvidence","economicsEvidence","repeatabilityEvidence","riskEvidence","risks","nextValidation"] } }
-  }, required: ["summary","candidates"]
+    }, required: ["name","pursuitPriority","confidence","demandEvidence","accessEvidence","economicsEvidence","repeatabilityEvidence","riskEvidence","nextValidation"] } }
+  }, required: ["candidates"]
 };
 
 function normalizeScore(value: unknown): number {
@@ -80,7 +78,7 @@ export async function POST(req: Request) {
     const marketScope = String(body.marketScope || "Global").trim();
     if (!goal) return NextResponse.json({ ok:false, error:"A research goal is required." }, { status:400 });
 
-    const prompt = `Research goal: ${goal}\nMarket scope: ${marketScope}\n\nThis is a RESEARCH-ONLY test. Do not recommend contacting anyone, spending money, creating accounts, making commitments, or taking irreversible actions.\n\nFind concrete business or service opportunities that fit the goal. For every candidate, investigate FIVE separate dimensions: (1) demand, (2) customer access, (3) economics/monetization, (4) repeatability, and (5) risks/competition/compliance. For each dimension, clearly separate sourced evidence from inference and state when evidence is weak, conflicting, indirect, or missing.\n\nSet pursuitPriority from 0-100 using only the strength and completeness of the evidence across those five dimensions. Set confidence from 0-100 based on source quality, independence/corroboration, recency where relevant, and how much of the assessment is actually evidenced. Do not use arbitrary low scores just because this is an early test. Do not treat the priority score as a prediction of business success.\n\nList concrete risks separately and give exactly one nextValidation step that would most efficiently resolve the biggest remaining uncertainty. Put the URLs of the sources you relied on inside the relevant evidence text (for example, "Source: https://..."), because the response schema is intentionally limited. Do not invent sources. The result should help an owner decide what deserves further investigation, while preserving uncertainty rather than hiding it.`;
+    const prompt = `Research goal: ${goal}\nMarket scope: ${marketScope}\n\nThis is a RESEARCH-ONLY test. Do not recommend contacting anyone, spending money, creating accounts, making commitments, or taking irreversible actions.\n\nFind concrete business or service opportunities that fit the goal. For every candidate, investigate FIVE separate dimensions: (1) demand, (2) customer access, (3) economics/monetization, (4) repeatability, and (5) risks/competition/compliance. For each dimension, clearly separate sourced evidence from inference and state when evidence is weak, conflicting, indirect, or missing.\n\nSet pursuitPriority from 0-100 using only the strength and completeness of the evidence across those five dimensions. Set confidence from 0-100 based on source quality, independence/corroboration, recency where relevant, and how much of the assessment is actually evidenced. Do not use arbitrary low scores just because this is an early test. Do not treat the priority score as a prediction of business success.\n\nInclude concrete risks clearly inside riskEvidence and give exactly one nextValidation step that would most efficiently resolve the biggest remaining uncertainty. Put the URLs of the sources you relied on inside the relevant evidence text (for example, "Source: https://..."), because the response schema is intentionally limited. Do not invent sources. The result should help an owner decide what deserves further investigation, while preserving uncertainty rather than hiding it.`;
 
     const response = await fetch("https://api.exa.ai/search", {
       method:"POST", headers:{ "x-api-key":key, "Content-Type":"application/json" },
@@ -104,7 +102,7 @@ export async function POST(req: Request) {
       try { parsed = JSON.parse(output); }
       catch { return NextResponse.json({ ok:false, configured:true, error:"Exa returned research content that was not valid JSON." }, { status:502 }); }
     }
-    const summary = parsed?.summary || "";
+    const summary = parsed?.summary || `Research completed for "${goal}" with ${Array.isArray(parsed?.candidates) ? parsed.candidates.length : 0} candidate opportunities.`;
     const candidates: Candidate[] = Array.isArray(parsed?.candidates) ? parsed.candidates : [];
     let runId:string | null = null;
 
@@ -124,7 +122,7 @@ export async function POST(req: Request) {
             economics_evidence:String(candidate.economicsEvidence || ""),
             repeatability_evidence:String(candidate.repeatabilityEvidence || ""),
             risk_evidence:String(candidate.riskEvidence || ""),
-            risks:Array.isArray(candidate.risks) ? candidate.risks.map(String) : [],
+            risks:[],
             next_validation:String(candidate.nextValidation || ""),
             source_urls:extractSourceUrls(candidate)
           }));
