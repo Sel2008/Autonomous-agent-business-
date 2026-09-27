@@ -44,8 +44,13 @@ export async function POST(req: Request) {
   const key = process.env.EXA_API_KEY;
   if (!key) return NextResponse.json({ ok:false, configured:false, error:"Research provider is not configured in the app. A server-side EXA_API_KEY is required for deployed research." }, { status:503 });
   try {
-    const body = await req.json();
-    const goal = String(body.goal || "").trim();
+    let body:any;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ ok:false, configured:true, error:"The dashboard sent an invalid or empty JSON request body." }, { status:400 });
+    }
+    const goal = String(body?.goal || "").trim();
     const marketScope = String(body.marketScope || "Global").trim();
     if (!goal) return NextResponse.json({ ok:false, error:"A research goal is required." }, { status:400 });
 
