@@ -1,5 +1,14 @@
 import { NextResponse } from "next/server";
 
+function readableError(value: unknown, fallback: string) {
+  if (typeof value === "string" && value.trim()) return value;
+  if (value instanceof Error && value.message) return value.message;
+  if (value && typeof value === "object") {
+    try { return JSON.stringify(value); } catch { return fallback; }
+  }
+  return fallback;
+}
+
 /**
  * Starts one supervised agent cycle from the owner's mission.
  * The owner supplies the mission; the agent decides that research is the
@@ -28,7 +37,7 @@ export async function POST(req: Request) {
       return NextResponse.json({
         ok: false,
         stage: "RESEARCH",
-        error: result?.error || "The agent could not complete its research stage.",
+        error: readableError(result?.error, "The agent could not complete its research stage."),
       }, { status: discovery.status || 502 });
     }
 
@@ -49,7 +58,7 @@ export async function POST(req: Request) {
   } catch (error) {
     return NextResponse.json({
       ok: false,
-      error: error instanceof Error ? error.message : "Agent run failed",
+      error: readableError(error, "Agent run failed"),
     }, { status: 500 });
   }
 }
