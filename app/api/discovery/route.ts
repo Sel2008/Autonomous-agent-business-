@@ -50,6 +50,15 @@ function extractExaResultSources(data: any): { title:string; url:string }[] {
     .filter((source:{title:string;url:string}) => /^https?:\/\//.test(source.url));
 }
 
+function readableError(value: unknown, fallback: string): string {
+  if (typeof value === "string" && value.trim()) return value;
+  if (value instanceof Error && value.message) return value.message;
+  if (value && typeof value === "object") {
+    try { return JSON.stringify(value); } catch { return fallback; }
+  }
+  return fallback;
+}
+
 export async function GET() {
   if (!supabaseConfigured()) return NextResponse.json({ configured:false, runs:[] });
   try {
@@ -61,7 +70,7 @@ export async function GET() {
     const grouped = (Array.isArray(runs) ? runs : []).map((run:any) => ({ ...run, candidates: candidateRows.filter((candidate:any) => candidate.run_id === run.id) }));
     return NextResponse.json({ configured:true, runs:grouped });
   } catch (error) {
-    return NextResponse.json({ configured:false, runs:[], error:error instanceof Error ? error.message : "Discovery history read failed" }, { status:500 });
+    return NextResponse.json({ configured:false, runs:[], error:readableError(error,"Discovery history read failed") }, { status:500 });
   }
 }
 
@@ -87,7 +96,7 @@ export async function POST(req: Request) {
     if (raw.trim()) { try { data = JSON.parse(raw); } catch { data = { raw }; } }
     if (!response.ok) {
       const detail = data?.error || data?.message || data?.raw || `Exa request failed: ${response.status}`;
-      return NextResponse.json({ ok:false, configured:true, error:String(detail) }, { status:502 });
+      return NextResponse.json({ ok:false, configured:true, error:readableError(detail,`Exa request failed: ${response.status}`) }, { status:502 });
     }
     if (!data) return NextResponse.json({ ok:false, configured:true, error:"Exa returned an empty response." }, { status:502 });
 
@@ -119,7 +128,6 @@ export async function POST(req: Request) {
           }));
           await supabaseRequest("research_candidates", { method:"POST", body:JSON.stringify(rows), headers:{"Prefer":"return=minimal"} });
 
-          // Promote research into the main ledger without enabling execution.
           const opportunityRows = candidates.map((candidate, index) => {
             const name = String(candidate.name || "Unnamed opportunity");
             const id = `research-${runId}-${index}`;
@@ -147,9 +155,6 @@ export async function POST(req: Request) {
           }));
           await supabaseRequest("opportunity_verification", { method:"POST", body:JSON.stringify(verificationRows), headers:{"Prefer":"return=minimal"} });
 
-          // Put the actual research findings into the evidence ledger as
-          // UNVERIFIED evidence. This keeps the dashboard honest: research is
-          // visible immediately, but it is not treated as proof until verified.
           const evidenceRows = opportunityRows.flatMap((opportunity, index) => {
             const candidate = candidates[index];
             const source = resultUrls[0] || `Discovery research run ${runId}`;
@@ -162,21 +167,14 @@ export async function POST(req: Request) {
               { opportunity_id:opportunity.id, type:"RESEARCH", claim:`${opportunity.name}: risk evidence`, source, checked_on:checked, quality:"UNVERIFIED", notes:String(candidate.riskEvidence || "Research evidence captured; verify before relying on it.") }
             ];
           });
-          if (evidenceRows.length > 0) {
-            await supabaseRequest("evidence", { method:"POST", body:JSON.stringify(evidenceRows), headers:{"Prefer":"return=minimal"} });
-          }
+          if (evidenceRows.length > 0) await supabaseRequest("evidence", { method:"POST", body:JSON.stringify(evidenceRows), headers:{"Prefer":"return=minimal"} });
 
           const ranked = [...opportunityRows].sort((a,b) => b.priority - a.priority);
           const first = ranked[0];
           if (first) {
             await supabaseRequest("tasks", {
               method:"POST",
-              body:JSON.stringify({
-                id:`research-${runId}-next-validation`,
-                title:`Validate research candidate: ${first.name}`,
-                status:"READY",
-                opportunity_id:first.id
-              }),
+              body:JSON.stringify({ id:`research-${runId}-next-validation`, title:`Validate research candidate: ${first.name}`, status:"READY", opportunity_id:first.id }),
               headers:{"Prefer":"return=minimal"}
             });
           }
@@ -190,6 +188,6 @@ export async function POST(req: Request) {
     }
     return NextResponse.json({ ok:true, configured:true, goal, marketScope, researchOnly:true, runId, persisted:Boolean(runId), summary, candidates, sourceUrls, promotedOpportunities });
   } catch (error) {
-    return NextResponse.json({ ok:false, error:error instanceof Error ? error.message : "Discovery request failed" }, { status:500 });
+    return NextResponse.json({ ok:false, error:readableError(error,"Discovery request failed") }, { status:500 });
   }
 }
