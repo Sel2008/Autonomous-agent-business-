@@ -50,6 +50,14 @@ function extractExaResultSources(data: any): { title:string; url:string }[] {
     .filter((source:{title:string;url:string}) => /^https?:\/\//.test(source.url));
 }
 
+function slugify(value: string): string {
+  return String(value || "candidate")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 70) || "candidate";
+}
+
 export async function GET() {
   if (!supabaseConfigured()) return NextResponse.json({ configured:false, runs:[] });
   try {
@@ -102,6 +110,7 @@ export async function POST(req: Request) {
     const sourceUrls = extractExaResultSources(data);
     const resultUrls = sourceUrls.map((source) => source.url);
     let runId:string | null = null;
+    let promotedOpportunities: { id:string; name:string; pursuitPriority:number; confidence:number }[] = [];
 
     if (supabaseConfigured()) {
       const created = await supabaseRequest("discovery_runs", { method:"POST", body:JSON.stringify({ goal, market_scope:marketScope, mode:"RESEARCH_ONLY", status:"RUNNING", summary:"" }), headers:{"Prefer":"return=representation"} });
@@ -117,6 +126,52 @@ export async function POST(req: Request) {
             source_urls:Array.from(new Set([...extractSourceUrls(candidate), ...resultUrls]))
           }));
           await supabaseRequest("research_candidates", { method:"POST", body:JSON.stringify(rows), headers:{"Prefer":"return=minimal"} });
+
+          // Feed the research result into the main agent ledger. Research should not
+          // execute anything; it only creates candidates, verification work, and a
+          // controlled next step for the agent to inspect.
+          const opportunityRows = candidates.map((candidate, index) => {
+            const name = String(candidate.name || "Unnamed opportunity");
+            const id = `research-${runId}-${index}`;
+            const priority = normalizeScore(candidate.pursuitPriority);
+            return {
+              id,
+              name,
+              model:"Research candidate",
+              capital:"To validate",
+              status:"CANDIDATE",
+              why:String(candidate.demandEvidence || candidate.accessEvidence || "Research candidate generated from the discovery run."),
+              next_action:String(candidate.nextValidation || "Verify the strongest remaining uncertainty."),
+              priority
+            };
+          });
+          await supabaseRequest("opportunities", { method:"POST", body:JSON.stringify(opportunityRows.map(({priority, ...row}) => row)), headers:{"Prefer":"return=minimal"} });
+
+          const verificationRows = opportunityRows.map(({id}) => ({
+            opportunity_id:id,
+            demand:"UNVERIFIED",
+            access:"UNVERIFIED",
+            margin:"UNVERIFIED",
+            repeatability:"UNVERIFIED",
+            risk:"UNVERIFIED"
+          }));
+          await supabaseRequest("opportunity_verification", { method:"POST", body:JSON.stringify(verificationRows), headers:{"Prefer":"return=minimal"} });
+
+          const ranked = [...opportunityRows].sort((a,b) => b.priority - a.priority);
+          const first = ranked[0];
+          if (first) {
+            await supabaseRequest("tasks", {
+              method:"POST",
+              body:JSON.stringify({
+                id:`research-${runId}-next-validation`,
+                title:`Validate research candidate: ${first.name}`,
+                status:"READY",
+                opportunity_id:first.id
+              }),
+              headers:{"Prefer":"return=minimal"}
+            });
+          }
+          promotedOpportunities = opportunityRows.map(({id,name,priority, ...rest}) => ({ id, name, pursuitPriority:priority, confidence:normalizeScore(candidates.find((candidate) => String(candidate.name || "Unnamed opportunity") === name)?.confidence) }));
         }
         await supabaseRequest("discovery_runs?id=eq."+encodeURIComponent(runId), { method:"PATCH", body:JSON.stringify({ status:"COMPLETE", summary:String(summary), completed_at:new Date().toISOString() }), headers:{"Prefer":"return=minimal"} });
       } catch (persistError) {
@@ -124,7 +179,7 @@ export async function POST(req: Request) {
         throw persistError;
       }
     }
-    return NextResponse.json({ ok:true, configured:true, goal, marketScope, researchOnly:true, runId, persisted:Boolean(runId), summary, candidates, sourceUrls });
+    return NextResponse.json({ ok:true, configured:true, goal, marketScope, researchOnly:true, runId, persisted:Boolean(runId), summary, candidates, sourceUrls, promotedOpportunities });
   } catch (error) {
     return NextResponse.json({ ok:false, error:error instanceof Error ? error.message : "Discovery request failed" }, { status:500 });
   }
