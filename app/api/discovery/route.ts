@@ -50,14 +50,6 @@ function extractExaResultSources(data: any): { title:string; url:string }[] {
     .filter((source:{title:string;url:string}) => /^https?:\/\//.test(source.url));
 }
 
-function slugify(value: string): string {
-  return String(value || "candidate")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 70) || "candidate";
-}
-
 export async function GET() {
   if (!supabaseConfigured()) return NextResponse.json({ configured:false, runs:[] });
   try {
@@ -127,9 +119,7 @@ export async function POST(req: Request) {
           }));
           await supabaseRequest("research_candidates", { method:"POST", body:JSON.stringify(rows), headers:{"Prefer":"return=minimal"} });
 
-          // Feed the research result into the main agent ledger. Research should not
-          // execute anything; it only creates candidates, verification work, and a
-          // controlled next step for the agent to inspect.
+          // Promote research into the main ledger without enabling execution.
           const opportunityRows = candidates.map((candidate, index) => {
             const name = String(candidate.name || "Unnamed opportunity");
             const id = `research-${runId}-${index}`;
@@ -157,6 +147,25 @@ export async function POST(req: Request) {
           }));
           await supabaseRequest("opportunity_verification", { method:"POST", body:JSON.stringify(verificationRows), headers:{"Prefer":"return=minimal"} });
 
+          // Put the actual research findings into the evidence ledger as
+          // UNVERIFIED evidence. This keeps the dashboard honest: research is
+          // visible immediately, but it is not treated as proof until verified.
+          const evidenceRows = opportunityRows.flatMap((opportunity, index) => {
+            const candidate = candidates[index];
+            const source = resultUrls[0] || `Discovery research run ${runId}`;
+            const checked = new Date().toISOString().slice(0, 10);
+            return [
+              { opportunity_id:opportunity.id, type:"RESEARCH", claim:`${opportunity.name}: demand evidence`, source, checked_on:checked, quality:"UNVERIFIED", notes:String(candidate.demandEvidence || "Research evidence captured; verify before relying on it.") },
+              { opportunity_id:opportunity.id, type:"RESEARCH", claim:`${opportunity.name}: customer access evidence`, source, checked_on:checked, quality:"UNVERIFIED", notes:String(candidate.accessEvidence || "Research evidence captured; verify before relying on it.") },
+              { opportunity_id:opportunity.id, type:"RESEARCH", claim:`${opportunity.name}: economics evidence`, source, checked_on:checked, quality:"UNVERIFIED", notes:String(candidate.economicsEvidence || "Research evidence captured; verify before relying on it.") },
+              { opportunity_id:opportunity.id, type:"RESEARCH", claim:`${opportunity.name}: repeatability evidence`, source, checked_on:checked, quality:"UNVERIFIED", notes:String(candidate.repeatabilityEvidence || "Research evidence captured; verify before relying on it.") },
+              { opportunity_id:opportunity.id, type:"RESEARCH", claim:`${opportunity.name}: risk evidence`, source, checked_on:checked, quality:"UNVERIFIED", notes:String(candidate.riskEvidence || "Research evidence captured; verify before relying on it.") }
+            ];
+          });
+          if (evidenceRows.length > 0) {
+            await supabaseRequest("evidence", { method:"POST", body:JSON.stringify(evidenceRows), headers:{"Prefer":"return=minimal"} });
+          }
+
           const ranked = [...opportunityRows].sort((a,b) => b.priority - a.priority);
           const first = ranked[0];
           if (first) {
@@ -171,7 +180,7 @@ export async function POST(req: Request) {
               headers:{"Prefer":"return=minimal"}
             });
           }
-          promotedOpportunities = opportunityRows.map(({id,name,priority, ...rest}) => ({ id, name, pursuitPriority:priority, confidence:normalizeScore(candidates.find((candidate) => String(candidate.name || "Unnamed opportunity") === name)?.confidence) }));
+          promotedOpportunities = opportunityRows.map(({id,name,priority}) => ({ id, name, pursuitPriority:priority, confidence:normalizeScore(candidates.find((candidate) => String(candidate.name || "Unnamed opportunity") === name)?.confidence) }));
         }
         await supabaseRequest("discovery_runs?id=eq."+encodeURIComponent(runId), { method:"PATCH", body:JSON.stringify({ status:"COMPLETE", summary:String(summary), completed_at:new Date().toISOString() }), headers:{"Prefer":"return=minimal"} });
       } catch (persistError) {
