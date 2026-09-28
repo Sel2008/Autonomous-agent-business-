@@ -18,13 +18,31 @@ export async function GET() {
   if (!supabaseConfigured()) return NextResponse.json({ configured:false, opportunities, tasks, approvals:[], evidence:[], verification:{} });
   try {
     const [o,t,a,e,v] = await Promise.all([
-      supabaseRequest("opportunities?select=*&order=id"),
-      supabaseRequest("tasks?select=*&order=id"),
+      supabaseRequest("opportunities?select=*&order=created_at.desc"),
+      supabaseRequest("tasks?select=*&order=created_at.desc"),
       supabaseRequest("approvals?select=*&order=created_at.desc"),
       supabaseRequest("evidence?select=*&order=created_at.desc"),
-      supabaseRequest("opportunity_verification?select=*"),
+      supabaseRequest("opportunity_verification?select=*")
     ]);
-    return NextResponse.json({ configured:true, opportunities:o, tasks:t, approvals:a, evidence:e, verification:v });
+
+    // The dashboard is the live research view. Keep the original bootstrap
+    // tasks/opportunities in the database for history, but do not mix them with
+    // newly researched candidates in the operator-facing board.
+    const opportunityRows = Array.isArray(o) ? o : [];
+    const liveOpportunities = opportunityRows.filter((row:any) => String(row?.id || "").startsWith("research-"));
+    const liveIds = new Set(liveOpportunities.map((row:any) => String(row.id)));
+    const liveTasks = (Array.isArray(t) ? t : []).filter((row:any) => liveIds.has(String(row?.opportunity_id || "")) && String(row?.id || "").startsWith("research-"));
+    const liveEvidence = (Array.isArray(e) ? e : []).filter((row:any) => liveIds.has(String(row?.opportunity_id || "")));
+    const liveVerification = (Array.isArray(v) ? v : []).filter((row:any) => liveIds.has(String(row?.opportunity_id || "")));
+
+    return NextResponse.json({
+      configured:true,
+      opportunities:liveOpportunities,
+      tasks:liveTasks,
+      approvals:Array.isArray(a) ? a : [],
+      evidence:liveEvidence,
+      verification:liveVerification
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Database read error";
     console.error("Supabase ledger GET failed:", message);
