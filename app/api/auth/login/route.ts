@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 const COOKIE_NAME = "aba_owner_session";
-const MAX_AGE = 60 * 60 * 24 * 7;
 
 function sign(value: string, secret: string) {
   return createHmac("sha256", secret).update(value).digest("base64url");
@@ -34,7 +33,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "Incorrect password." }, { status: 401 });
   }
 
-  const value = `owner:${Date.now() + MAX_AGE * 1000}`;
+  const value = `owner:${Date.now() + 60 * 60 * 24 * 1000}`;
   const token = `${value}.${sign(value, secret)}`;
   const response = NextResponse.json({ ok: true });
   response.cookies.set(COOKIE_NAME, token, {
@@ -42,7 +41,6 @@ export async function POST(req: Request) {
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
-    maxAge: MAX_AGE,
   });
   return response;
 }
