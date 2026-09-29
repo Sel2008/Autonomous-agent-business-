@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getVercelOidcToken } from "@vercel/oidc";
 
 function readableError(value: unknown, fallback: string) {
   if (typeof value === "string" && value.trim()) return value;
@@ -25,9 +26,13 @@ export async function POST(req: Request) {
     }
 
     const origin = new URL(req.url).origin;
+    const oidcToken = await getVercelOidcToken().catch(() => null);
+    const internalHeaders: HeadersInit = { "Content-Type": "application/json" };
+    if (oidcToken) internalHeaders["x-vercel-trusted-oidc-idp-token"] = oidcToken;
+
     const discovery = await fetch(`${origin}/api/discovery`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: internalHeaders,
       body: JSON.stringify({ goal, marketScope }),
       cache: "no-store",
     });
@@ -41,7 +46,10 @@ export async function POST(req: Request) {
       }, { status: discovery.status || 502 });
     }
 
-    const next = await fetch(`${origin}/api/agent/next-action`, { cache: "no-store" });
+    const next = await fetch(`${origin}/api/agent/next-action`, {
+      headers: oidcToken ? { "x-vercel-trusted-oidc-idp-token": oidcToken } : undefined,
+      cache: "no-store"
+    });
     const nextResult = await next.json().catch(() => ({}));
 
     return NextResponse.json({
