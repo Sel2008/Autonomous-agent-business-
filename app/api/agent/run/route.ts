@@ -27,7 +27,9 @@ export async function POST(req: Request) {
 
     const origin = new URL(req.url).origin;
     const oidcToken = await getVercelOidcToken().catch(() => null);
+    const ownerCookie = req.headers.get("cookie");
     const internalHeaders: HeadersInit = { "Content-Type": "application/json" };
+    if (ownerCookie) internalHeaders["cookie"] = ownerCookie;
     if (oidcToken) internalHeaders["x-vercel-trusted-oidc-idp-token"] = oidcToken;
 
     const discovery = await fetch(`${origin}/api/discovery`, {
@@ -46,8 +48,12 @@ export async function POST(req: Request) {
       }, { status: discovery.status || 502 });
     }
 
+    const nextHeaders: HeadersInit = {};
+    if (ownerCookie) nextHeaders["cookie"] = ownerCookie;
+    if (oidcToken) nextHeaders["x-vercel-trusted-oidc-idp-token"] = oidcToken;
+
     const next = await fetch(`${origin}/api/agent/next-action`, {
-      headers: oidcToken ? { "x-vercel-trusted-oidc-idp-token": oidcToken } : undefined,
+      headers: nextHeaders,
       cache: "no-store"
     });
     const nextResult = await next.json().catch(() => ({}));
