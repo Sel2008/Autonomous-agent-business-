@@ -85,7 +85,7 @@ export async function POST(req: Request) {
     }).join("\n");
 
     const checkedOn = new Date().toISOString().slice(0, 10);
-    const source = uniqueSources[0]?.url || "Exa verification run for " + String(opportunity.name || "opportunity");
+    const source = (uniqueSources[0] as { title: string; url: string } | undefined)?.url || "Exa verification run for " + String(opportunity.name || "opportunity");
     const notes = "Agent verification for " + label + ". Evidence found:\n" + finding +
       "\n\nSources: " + uniqueSources.map((s: { url: string }) => s.url).join(", ") +
       ".\n\nThis is evidence for further validation, not proof of business success.";
