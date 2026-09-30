@@ -54,6 +54,17 @@ async function runAction(origin:string, action:string, opportunityId:string) {
     return { response, result, type:"send-outreach" };
   }
 
+  if (action === "Learn from business result") {
+    const response = await fetch(`${origin}/api/agent/learn`, {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({opportunityId}),
+      cache:"no-store"
+    });
+    const result = await response.json().catch(()=>({}));
+    return { response, result, type:"learning" };
+  }
+
   return null;
 }
 
