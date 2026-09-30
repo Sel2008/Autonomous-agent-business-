@@ -53,11 +53,14 @@ export function getNextAction(input: {
 
   const ready = input.tasks.find((t) => t.status === "READY");
   if (ready) {
+    const consequential = /^Send approved outreach/i.test(ready.title);
     return {
       opportunityId: ready.opportunity_id,
       action: ready.title,
-      reason: "No blocking approval or in-progress task was found, so the next ready task can be worked on.",
-      permission: "READ_ONLY",
+      reason: consequential
+        ? "The outreach action is consequential and can only run after its owner approval is APPROVED."
+        : "No blocking approval or in-progress task was found, so the next ready task can be worked on.",
+      permission: consequential ? "OWNER_APPROVAL_REQUIRED" : "READ_ONLY",
       status: "READY",
     };
   }

@@ -177,6 +177,11 @@ export async function POST(req: Request) {
               body:JSON.stringify({ id:`research-${runId}-next-validation`, title:`Validate research candidate: ${first.name}`, status:"READY", opportunity_id:first.id }),
               headers:{"Prefer":"return=minimal"}
             });
+            await supabaseRequest("tasks", {
+              method:"POST",
+              body:JSON.stringify({ id:`research-${runId}-monetization`, title:`Build monetization plan: ${first.name}`, status:"READY", opportunity_id:first.id }),
+              headers:{"Prefer":"return=minimal"}
+            });
           }
           promotedOpportunities = opportunityRows.map(({id,name,priority}) => ({ id, name, pursuitPriority:priority, confidence:normalizeScore(candidates.find((candidate) => String(candidate.name || "Unnamed opportunity") === name)?.confidence) }));
         }

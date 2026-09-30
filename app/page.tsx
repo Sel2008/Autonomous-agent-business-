@@ -49,6 +49,8 @@ export default function Home(){
 
  const complete=tasks.filter(t=>t.status==="COMPLETE").length;
  const checked=evidence.filter(e=>e.quality!=="UNVERIFIED").length;
+ const businessResults=evidence.filter(e=>e.type==="BUSINESS_RESULT");
+ const verifiedRevenue=businessResults.reduce((sum,e)=>{try{const x=JSON.parse(e.notes||"{}");return sum+(Number(x.amount)||0)}catch{return sum}},0);
  const pendingApprovals=approvals.filter(a=>a.status==="PENDING").length;
  const nextTask=useMemo(()=>tasks.find(t=>t.status!=="COMPLETE"),[tasks]);
  const selectedOpportunity=opportunities.find(o=>o.id===selected);
@@ -65,7 +67,7 @@ export default function Home(){
  return <main className="shell">
   <header className="top">
    <div><div className="brand">Autonomous Business Agent</div><div className="subbrand">Owner Console · Agent Activity · Business Results</div></div>
-   <div className="actions"><span className="badge">{dbStatus==="connected"?"DB CONNECTED":dbStatus==="checking"?"DB CHECKING":"LOCAL FALLBACK"}</span><a href="/discovery" className="pill" style={{textDecoration:"none"}}>Research & Discovery</a></div>
+   <div className="actions"><span className="badge">{dbStatus==="connected"?"DB CONNECTED":dbStatus==="checking"?"DB CHECKING":"LOCAL FALLBACK"}</span><span className="pill">{agentAction?.brain||"DETERMINISTIC"} BRAIN</span><a href="/discovery" className="pill" style={{textDecoration:"none"}}>Research & Discovery</a></div>
   </header>
 
   <section className="hero">
@@ -111,7 +113,7 @@ export default function Home(){
 
   {tab==="scoring"&&<section className="section card"><div className="eyebrow">AGENT ASSESSMENT</div><h2>Opportunity verification</h2><p className="muted">Scoring is an agent assessment of the live research set. It is not a guarantee of revenue.</p>{opportunities.length===0?<p className="muted">No live research opportunities to assess.</p>:opportunities.map(o=>{const v=verification[o.id]||{demand:"UNVERIFIED",access:"UNVERIFIED",margin:"UNVERIFIED",repeatability:"UNVERIFIED",risk:"UNVERIFIED"} as Verification;return <div className="evidence" key={o.id}><div><strong>{o.name}</strong><div className="muted">Verification progress: {verificationPercent(v)}%</div></div><span className="pill">{verificationPercent(v)}% verified</span></div>})}</section>}
 
-  <section className="section card"><div className="eyebrow">BUSINESS RESULTS</div><h2>Revenue & outcomes</h2><div className="grid metrics"><div><div className="muted">Verified revenue</div><div className="metric">R0.00</div></div><div><div className="muted">Costs recorded</div><div className="metric">R0.00</div></div><div><div className="muted">Completed jobs</div><div className="metric">0</div></div></div><p className="muted">These are business outcomes, not task-completion counts. Revenue will be recorded separately when an actual paid outcome exists.</p></section>
+  <section className="section card"><div className="eyebrow">BUSINESS RESULTS</div><h2>Revenue & outcomes</h2><div className="grid metrics"><div><div className="muted">Verified revenue</div><div className="metric">R{verifiedRevenue.toFixed(2)}</div></div><div><div className="muted">Costs recorded</div><div className="metric">R0.00</div></div><div><div className="muted">Completed jobs</div><div className="metric">{businessResults.length}</div></div></div><p className="muted">These are business outcomes, not task-completion counts. Revenue will be recorded separately when an actual paid outcome exists.</p></section>
 
   {selectedOpportunity&&<section className="section card"><div className="section-head"><div><div className="eyebrow">SELECTED OPPORTUNITY</div><h2>{selectedOpportunity.name}</h2></div><button className="small-button" onClick={()=>setSelected(null)}>Close</button></div><p className="muted">{selectedOpportunity.why}</p><div className="next">Agent next: {selectedOpportunity.next}</div></section>}
 
