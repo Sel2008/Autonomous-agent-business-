@@ -22,13 +22,9 @@ const dimensionLabels: Record<Dimension, string> = {
 
 export async function POST(req: Request) {
   try {
-    if (!supabaseConfigured()) {
-      return NextResponse.json({ ok: false, error: "Supabase is not configured." }, { status: 503 });
-    }
+    if (!supabaseConfigured()) return NextResponse.json({ ok: false, error: "Supabase is not configured." }, { status: 503 });
     const key = process.env.EXA_API_KEY;
-    if (!key) {
-      return NextResponse.json({ ok: false, error: "Research provider is not configured in the app." }, { status: 503 });
-    }
+    if (!key) return NextResponse.json({ ok: false, error: "Research provider is not configured in the app." }, { status: 503 });
 
     const body = await req.json().catch(() => ({}));
     const opportunityId = String(body?.opportunityId || "").trim();
@@ -74,9 +70,7 @@ export async function POST(req: Request) {
     const sources = results
       .map((r: any) => ({ title: String(r?.title || r?.url || "Source"), url: String(r?.url || "").trim() }))
       .filter((s: { title: string; url: string }) => /^https?:\/\//.test(s.url));
-    const uniqueSources = Array.from(
-      new Map(sources.map((s: { title: string; url: string }) => [s.url, s])).values()
-    ).slice(0, 5);
+    const uniqueSources = Array.from(new Map(sources.map((s: { title: string; url: string }) => [s.url, s])).values()).slice(0, 5);
 
     const finding = results.slice(0, 5).map((r: any) => {
       const title = String(r?.title || "Source");
@@ -119,8 +113,9 @@ export async function POST(req: Request) {
     const persistedVerificationRows = await supabaseRequest(
       "opportunity_verification?opportunity_id=eq." + encodeURIComponent(opportunityId) + "&select=*"
     );
-    const persistedVerification = Array.isArray(persistedVerificationRows) ? persistedVerificationRows[0] : null;
-    if (String(persistedVerification?.[dimension] || "") !== "CHECKED") {
+    const persistedRows = Array.isArray(persistedVerificationRows) ? persistedVerificationRows : [];
+    const persisted = persistedRows.find((row: any) => String(row?.[dimension] || "") === "CHECKED" || String(row?.[dimension] || "") === "STRONG");
+    if (!persisted) {
       throw new Error("Validation evidence was found, but the verification state did not persist in Supabase.");
     }
 
@@ -142,10 +137,13 @@ export async function POST(req: Request) {
       "tasks?opportunity_id=eq." + encodeURIComponent(opportunityId) + "&status=eq.READY&order=created_at.asc&select=*"
     );
     const validationTask = Array.isArray(taskRows)
-      ? taskRows.find((row: any) => String(row?.title || "").toLowerCase().includes("verify " + dimension))
+      ? taskRows.find((row: any) => {
+          const title = String(row?.title || "").toLowerCase();
+          return title.includes("validate research candidate") || title.includes("verify " + dimension);
+        })
       : null;
 
-    if (validationTask) {
+    if (validationTask?.id) {
       await supabaseRequest("tasks?id=eq." + encodeURIComponent(validationTask.id), {
         method: "PATCH",
         body: JSON.stringify({ status: "COMPLETE" }),
@@ -160,7 +158,7 @@ export async function POST(req: Request) {
       status: "CHECKED",
       finding,
       sources: uniqueSources,
-      taskCompleted: Boolean(validationTask),
+      taskCompleted: Boolean(validationTask?.id),
     });
   } catch (error) {
     return NextResponse.json({ ok: false, error: readableError(error, "Agent verification failed.") }, { status: 500 });
