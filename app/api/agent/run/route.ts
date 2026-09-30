@@ -56,18 +56,63 @@ export async function POST(req: Request) {
       headers: nextHeaders,
       cache: "no-store"
     });
-    const nextResult = await next.json().catch(() => ({}));
+    let nextResult = await next.json().catch(() => ({}));
+
+    // One controlled follow-up action is executed automatically after research.
+    // This keeps the agent moving without turning the test into unrestricted execution.
+    const nextAction = nextResult?.action;
+    if (
+      nextResult?.status === "READY" &&
+      typeof nextAction === "string" &&
+      /^Verify (demand|access|margin|repeatability|risk)$/.test(nextAction) &&
+      nextResult?.opportunityId
+    ) {
+      const dimension = nextAction.replace(/^Verify /, "").toLowerCase();
+      const validation = await fetch(`${origin}/api/agent/validate`, {
+        method: "POST",
+        headers: nextHeaders,
+        body: JSON.stringify({
+          opportunityId: nextResult.opportunityId,
+          dimension,
+        }),
+        cache: "no-store",
+      });
+      const validationResult = await validation.json().catch(() => ({}));
+
+      if (!validation.ok || !validationResult.ok) {
+        return NextResponse.json({
+          ok: false,
+          stage: "VALIDATION",
+          error: readableError(validationResult?.error, "The agent completed research but could not complete its next validation action."),
+          run: {
+            goal,
+            marketScope,
+            stage: "RESEARCH_COMPLETE",
+            researchRunId: result.runId || null,
+            opportunitiesCreated: Array.isArray(result.promotedOpportunities) ? result.promotedOpportunities.length : 0,
+          },
+          action: nextResult?.action || null,
+        }, { status: validation.status || 502 });
+      }
+
+      const refreshedNext = await fetch(`${origin}/api/agent/next-action`, {
+        headers: nextHeaders,
+        cache: "no-store",
+      });
+      nextResult = await refreshedNext.json().catch(() => nextResult);
+    }
 
     return NextResponse.json({
       ok: true,
       run: {
         goal,
         marketScope,
-        stage: "RESEARCH_COMPLETE",
+        stage: "VALIDATION_STEP_COMPLETE",
         researchRunId: result.runId || null,
         opportunitiesCreated: Array.isArray(result.promotedOpportunities) ? result.promotedOpportunities.length : 0,
       },
       action: nextResult?.action || null,
+      actionStatus: nextResult?.status || null,
     });
   } catch (error) {
     return NextResponse.json({
