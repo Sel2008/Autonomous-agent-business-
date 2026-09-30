@@ -69,7 +69,21 @@ export async function GET() {
 
     const ai = await askBusinessBrain(state);
     if (ai) {
-      return NextResponse.json({ configured:true, brain:"AI", action:ai });
+      const readyTitles = liveTasks
+        .filter((t:any)=>String(t?.status||"")==="READY")
+        .map((t:any)=>String(t?.title||"").toLowerCase());
+
+      const validForLedger =
+        (ai.action === "Build monetization plan" && readyTitles.some(t=>t.includes("build monetization plan"))) ||
+        (ai.action === "Prepare outreach pack" && readyTitles.some(t=>t.includes("prepare outreach pack"))) ||
+        (ai.action === "Send approved outreach" && readyTitles.some(t=>t.includes("send approved outreach")) &&
+          liveApprovals.some((a:any)=>a?.status==="APPROVED" && String(a?.title||"").toLowerCase().includes("approve sending outreach"))) ||
+        (ai.action === "Learn from business result" && readyTitles.some(t=>t.includes("learn from business result"))) ||
+        ai.action === "Review ledger for new work";
+
+      if (validForLedger) {
+        return NextResponse.json({ configured:true, brain:"AI", action:ai });
+      }
     }
 
     return NextResponse.json({ configured:true, brain:"DETERMINISTIC", action:deterministic });
