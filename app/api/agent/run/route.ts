@@ -58,16 +58,39 @@ export async function POST(req: Request) {
     });
     const nextResult = await next.json().catch(() => ({}));
 
+    // One bounded read-only validation step is now part of the agent cycle.
+    // Consequential actions still stop at the owner-approval boundary.
+    let validation: any = null;
+    const action = nextResult?.action;
+    if (action?.opportunityId && action?.permission === "READ_ONLY" && action?.status === "READY") {
+      const validation = await fetch(`${origin}/api/agent/execute-validation`, {
+        method: "POST",
+        headers: nextHeaders,
+        body: JSON.stringify({
+          opportunityId: action.opportunityId,
+          dimension: String(action.action || "").replace(/^Verify\\s+/i, "").trim(),
+        }),
+        cache: "no-store",
+      });
+      validation = await validation.json().catch(() => ({}));
+    }
+
+    const finalAction = validation?.ok
+      ? await fetch(`${origin}/api/agent/next-action`, { headers: nextHeaders, cache: "no-store" }).then(r => r.json().catch(() => ({})))
+      : nextResult;
+
     return NextResponse.json({
       ok: true,
       run: {
         goal,
         marketScope,
-        stage: "RESEARCH_COMPLETE",
+        stage: validation?.ok ? "VALIDATION_STEP_COMPLETE" : "RESEARCH_COMPLETE",
         researchRunId: result.runId || null,
         opportunitiesCreated: Array.isArray(result.promotedOpportunities) ? result.promotedOpportunities.length : 0,
       },
-      action: nextResult?.action || null,
+      action: finalAction?.action || action || null,
+      validation: validation?.ok ? validation : null,
+      validationError: validation && !validation.ok ? readableError(validation.error, "The agent could not complete its validation step.") : null,
     });
   } catch (error) {
     return NextResponse.json({
