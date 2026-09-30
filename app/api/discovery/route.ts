@@ -145,15 +145,40 @@ export async function POST(req: Request) {
           });
           await supabaseRequest("opportunities", { method:"POST", body:JSON.stringify(opportunityRows.map(({priority, ...row}) => row)), headers:{"Prefer":"return=minimal"} });
 
-          const verificationRows = opportunityRows.map(({id}) => ({
-            opportunity_id:id,
-            demand:"UNVERIFIED",
-            access:"UNVERIFIED",
-            margin:"UNVERIFIED",
-            repeatability:"UNVERIFIED",
-            risk:"UNVERIFIED"
-          }));
-          await supabaseRequest("opportunity_verification", { method:"POST", body:JSON.stringify(verificationRows), headers:{"Prefer":"return=minimal"} });
+          // Verification is a ledger keyed by opportunity_id. Research can be rerun,
+          // so do not blindly insert rows that already exist. Preserve any dimensions
+          // the agent has already checked and create only missing verification records.
+          const opportunityIds = opportunityRows.map(({id}) => id);
+          const existingVerification = opportunityIds.length > 0
+            ? await supabaseRequest(
+                "opportunity_verification?opportunity_id=in.(" +
+                opportunityIds.map((id) => encodeURIComponent(id)).join(",") +
+                ")&select=*"
+              )
+            : [];
+          const existingByOpportunity = new Map(
+            (Array.isArray(existingVerification) ? existingVerification : [])
+              .map((row:any) => [String(row?.opportunity_id || ""), row])
+          );
+
+          const missingVerificationRows = opportunityRows
+            .filter(({id}) => !existingByOpportunity.has(id))
+            .map(({id}) => ({
+              opportunity_id:id,
+              demand:"UNVERIFIED",
+              access:"UNVERIFIED",
+              margin:"UNVERIFIED",
+              repeatability:"UNVERIFIED",
+              risk:"UNVERIFIED"
+            }));
+
+          if (missingVerificationRows.length > 0) {
+            await supabaseRequest("opportunity_verification", {
+              method:"POST",
+              body:JSON.stringify(missingVerificationRows),
+              headers:{"Prefer":"return=minimal"}
+            });
+          }
 
           const evidenceRows = opportunityRows.flatMap((opportunity, index) => {
             const candidate = candidates[index];
