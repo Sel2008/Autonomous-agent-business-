@@ -63,7 +63,7 @@ export async function POST(req: Request) {
     let validation: any = null;
     const action = nextResult?.action;
     if (action?.opportunityId && action?.permission === "READ_ONLY" && action?.status === "READY") {
-      const validation = await fetch(`${origin}/api/agent/execute-validation`, {
+      const validationResponse = await fetch(`${origin}/api/agent/execute-validation`, {
         method: "POST",
         headers: nextHeaders,
         body: JSON.stringify({
@@ -72,7 +72,7 @@ export async function POST(req: Request) {
         }),
         cache: "no-store",
       });
-      validation = await validation.json().catch(() => ({}));
+      validation = await validationResponse.json().catch(() => ({}));
     }
 
     const finalAction = validation?.ok
