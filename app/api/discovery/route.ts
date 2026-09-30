@@ -176,7 +176,7 @@ export async function POST(req: Request) {
             await supabaseRequest("opportunity_verification", {
               method:"POST",
               body:JSON.stringify(missingVerificationRows),
-              headers:{"Prefer":"return=minimal"}
+              headers:{"Prefer":"resolution=ignore-duplicates,return=minimal"}
             });
           }
 
