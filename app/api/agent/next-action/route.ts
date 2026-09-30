@@ -12,10 +12,10 @@ const fallback = {
   verification: {}
 };
 
+const stateRank: Record<string, number> = { UNVERIFIED: 1, CHECKED: 2, STRONG: 3 };
+
 export async function GET() {
-  if (!supabaseConfigured()) {
-    return NextResponse.json({ configured:false, action:getNextAction(fallback) });
-  }
+  if (!supabaseConfigured()) return NextResponse.json({ configured:false, action:getNextAction(fallback) });
 
   try {
     const [tasks, approvals, verification] = await Promise.all([
@@ -25,21 +25,25 @@ export async function GET() {
     ]);
 
     const grouped: Record<string, Record<string, string>> = {};
-    for (const row of verification) {
-      const opportunityId = row.opportunity_id;
-      grouped[opportunityId] = {
-        ...(grouped[opportunityId] || {}),
-        demand: row.demand,
-        access: row.access,
-        margin: row.margin,
-        repeatability: row.repeatability,
-        risk: row.risk
-      };
+    for (const row of Array.isArray(verification) ? verification : []) {
+      const opportunityId = String(row?.opportunity_id || "");
+      if (!opportunityId) continue;
+      const current = grouped[opportunityId] || {};
+      for (const dimension of ["demand","access","margin","repeatability","risk"]) {
+        const incoming = String(row?.[dimension] || "UNVERIFIED");
+        const existing = current[dimension] || "UNVERIFIED";
+        current[dimension] = (stateRank[incoming] || 0) >= (stateRank[existing] || 0) ? incoming : existing;
+      }
+      grouped[opportunityId] = current;
     }
 
     return NextResponse.json({
       configured:true,
-      action:getNextAction({ tasks, approvals, verification:grouped })
+      action:getNextAction({
+        tasks: Array.isArray(tasks) ? tasks : [],
+        approvals: Array.isArray(approvals) ? approvals : [],
+        verification:grouped
+      })
     });
   } catch {
     return NextResponse.json({ configured:false, action:getNextAction(fallback) });
