@@ -8,10 +8,10 @@ export async function POST(req: Request) {
     const opportunityId=String(body?.opportunityId||"").trim();
     if(!opportunityId) return NextResponse.json({ok:false,error:"opportunityId is required."},{status:400});
 
-    const approvals=await supabaseRequest("approvals?title=like.*"+encodeURIComponent("Approve sending outreach")+"&status=eq.APPROVED&select=*");
-    const approval=Array.isArray(approvals)?approvals.find((a:any)=>String(a?.title||"").includes(String(opportunityId)))||approvals[0]:null;
-    const fallbackApprovals=await supabaseRequest("approvals?select=*&order=created_at.desc");
-    const approved=approval||((Array.isArray(fallbackApprovals)?fallbackApprovals:[]).find((a:any)=>a?.status==="APPROVED"&&String(a?.title||"").toLowerCase().includes("approve sending outreach")));
+    const sendTaskId="research-"+opportunityId.replace(/[^a-zA-Z0-9_-]/g,"-")+"-send";
+    const approvalId="approval-"+sendTaskId;
+    const approvals=await supabaseRequest("approvals?id=eq."+encodeURIComponent(approvalId)+"&select=*");
+    const approved=Array.isArray(approvals)?approvals.find((a:any)=>a?.status==="APPROVED"):null;
     if(!approved) return NextResponse.json({ok:false,error:"Owner approval is required before outreach can be sent."},{status:403});
 
     const webhook=process.env.OUTREACH_WEBHOOK_URL;
