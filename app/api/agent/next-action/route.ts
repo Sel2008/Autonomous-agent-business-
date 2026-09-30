@@ -82,7 +82,19 @@ export async function GET() {
         ai.action === "Review ledger for new work";
 
       if (validForLedger) {
-        return NextResponse.json({ configured:true, brain:"AI", action:ai });
+        const matchingTask = liveTasks.find((t:any)=>{
+          const title=String(t?.title||"").toLowerCase();
+          if(String(t?.status||"")!=="READY") return false;
+          if(ai.action==="Build monetization plan") return title.includes("build monetization plan");
+          if(ai.action==="Prepare outreach pack") return title.includes("prepare outreach pack");
+          if(ai.action==="Send approved outreach") return title.includes("send approved outreach");
+          if(ai.action==="Learn from business result") return title.includes("learn from business result");
+          return false;
+        });
+        const safeAction = matchingTask
+          ? {...ai, opportunityId:String(matchingTask.opportunity_id||ai.opportunityId)}
+          : ai;
+        return NextResponse.json({ configured:true, brain:"AI", action:safeAction });
       }
     }
 
