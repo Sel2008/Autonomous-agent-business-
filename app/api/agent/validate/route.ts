@@ -90,11 +90,39 @@ export async function POST(req: Request) {
       "\n\nSources: " + uniqueSources.map((s: { url: string }) => s.url).join(", ") +
       ".\n\nThis is evidence for further validation, not proof of business success.";
 
-    await supabaseRequest("opportunity_verification?opportunity_id=eq." + encodeURIComponent(opportunityId), {
-      method: "PATCH",
-      body: JSON.stringify({ [dimension]: "CHECKED" }),
-      headers: { "Prefer": "return=minimal" },
-    });
+    const verificationRows = await supabaseRequest(
+      "opportunity_verification?opportunity_id=eq." + encodeURIComponent(opportunityId) + "&select=*"
+    );
+    const verificationRow = Array.isArray(verificationRows) ? verificationRows[0] : null;
+
+    if (verificationRow?.id) {
+      await supabaseRequest("opportunity_verification?id=eq." + encodeURIComponent(String(verificationRow.id)), {
+        method: "PATCH",
+        body: JSON.stringify({ [dimension]: "CHECKED" }),
+        headers: { "Prefer": "return=minimal" },
+      });
+    } else {
+      await supabaseRequest("opportunity_verification", {
+        method: "POST",
+        body: JSON.stringify({
+          opportunity_id: opportunityId,
+          demand: dimension === "demand" ? "CHECKED" : "UNVERIFIED",
+          access: dimension === "access" ? "CHECKED" : "UNVERIFIED",
+          margin: dimension === "margin" ? "CHECKED" : "UNVERIFIED",
+          repeatability: dimension === "repeatability" ? "CHECKED" : "UNVERIFIED",
+          risk: dimension === "risk" ? "CHECKED" : "UNVERIFIED",
+        }),
+        headers: { "Prefer": "return=minimal" },
+      });
+    }
+
+    const persistedVerificationRows = await supabaseRequest(
+      "opportunity_verification?opportunity_id=eq." + encodeURIComponent(opportunityId) + "&select=*"
+    );
+    const persistedVerification = Array.isArray(persistedVerificationRows) ? persistedVerificationRows[0] : null;
+    if (String(persistedVerification?.[dimension] || "") !== "CHECKED") {
+      throw new Error("Validation evidence was found, but the verification state did not persist in Supabase.");
+    }
 
     await supabaseRequest("evidence", {
       method: "POST",
