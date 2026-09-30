@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getNextAction } from "../../../../lib/agent-core";
+import { askBusinessBrain } from "../../../../lib/agent-brain";
 import { supabaseConfigured, supabaseRequest } from "../../../../lib/supabase";
 
 const fallback = {
@@ -15,14 +16,23 @@ const fallback = {
 const stateRank: Record<string, number> = { UNVERIFIED: 1, CHECKED: 2, STRONG: 3 };
 
 export async function GET() {
-  if (!supabaseConfigured()) return NextResponse.json({ configured:false, action:getNextAction(fallback) });
+  if (!supabaseConfigured()) {
+    return NextResponse.json({ configured:false, brain:"DETERMINISTIC", action:getNextAction(fallback) });
+  }
 
   try {
-    const [tasks, approvals, verification] = await Promise.all([
-      supabaseRequest("tasks?select=*&order=id"),
+    const [tasks, approvals, verification, opportunities, evidence] = await Promise.all([
+      supabaseRequest("tasks?select=*&order=created_at.asc"),
       supabaseRequest("approvals?select=*&order=created_at.desc"),
-      supabaseRequest("opportunity_verification?select=*")
+      supabaseRequest("opportunity_verification?select=*"),
+      supabaseRequest("opportunities?select=*&order=created_at.desc"),
+      supabaseRequest("evidence?select=*&order=created_at.desc")
     ]);
+
+    const liveTasks = Array.isArray(tasks) ? tasks : [];
+    const liveApprovals = Array.isArray(approvals) ? approvals : [];
+    const liveOpportunities = Array.isArray(opportunities) ? opportunities : [];
+    const liveEvidence = Array.isArray(evidence) ? evidence : [];
 
     const grouped: Record<string, Record<string, string>> = {};
     for (const row of Array.isArray(verification) ? verification : []) {
@@ -37,15 +47,33 @@ export async function GET() {
       grouped[opportunityId] = current;
     }
 
-    return NextResponse.json({
-      configured:true,
-      action:getNextAction({
-        tasks: Array.isArray(tasks) ? tasks : [],
-        approvals: Array.isArray(approvals) ? approvals : [],
-        verification:grouped
-      })
+    const state = {
+      tasks: liveTasks,
+      approvals: liveApprovals,
+      verification: grouped,
+      opportunities: liveOpportunities,
+      evidence: liveEvidence
+    };
+
+    const deterministic = getNextAction({
+      tasks: liveTasks,
+      approvals: liveApprovals,
+      verification: grouped
     });
+
+    // Safety-critical ordering stays deterministic: pending approvals and
+    // unfinished verification cannot be overridden by the language model.
+    if (deterministic.status === "WAITING" || /^Verify /.test(deterministic.action)) {
+      return NextResponse.json({ configured:true, brain:"DETERMINISTIC", action:deterministic });
+    }
+
+    const ai = await askBusinessBrain(state);
+    if (ai) {
+      return NextResponse.json({ configured:true, brain:"AI", action:ai });
+    }
+
+    return NextResponse.json({ configured:true, brain:"DETERMINISTIC", action:deterministic });
   } catch {
-    return NextResponse.json({ configured:false, action:getNextAction(fallback) });
+    return NextResponse.json({ configured:false, brain:"DETERMINISTIC", action:getNextAction(fallback) });
   }
 }
