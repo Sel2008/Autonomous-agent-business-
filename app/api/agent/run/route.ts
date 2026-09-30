@@ -68,7 +68,7 @@ export async function POST(req: Request) {
         headers: nextHeaders,
         body: JSON.stringify({
           opportunityId: action.opportunityId,
-          dimension: String(action.action || "").replace(/^Verify\\s+/i, "").trim(),
+          dimension: String(action.action || "").replace(/^Verify\s+/i, "").trim(),
         }),
         cache: "no-store",
       });
