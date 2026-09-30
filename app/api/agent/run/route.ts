@@ -62,7 +62,7 @@ export async function POST(req: Request) {
     // Consequential actions still stop at the owner-approval boundary.
     let validation: any = null;
     const action = nextResult?.action;
-    if (action?.opportunityId && action?.permission === "READ_ONLY" && action?.status === "READY") {
+    if (action?.opportunityId && action?.action?.startsWith("Verify ") && action?.permission === "READ_ONLY" && action?.status === "READY") {
       const validationResponse = await fetch(`${origin}/api/agent/execute-validation`, {
         method: "POST",
         headers: nextHeaders,
