@@ -18,7 +18,8 @@ function quality(resultCount: number, text: string) {
 }
 
 export async function POST(req: Request) {
-  if (!process.env.EXA_API_KEY) return NextResponse.json({ok:false,error:"Research provider is not configured."},{status:503});
+  const exaKey = process.env.EXA_API_KEY;
+  if (!exaKey) return NextResponse.json({ok:false,error:"Research provider is not configured."},{status:503});
   if (!supabaseConfigured()) return NextResponse.json({ok:false,error:"Database is not configured."},{status:503});
   try {
     const body = await req.json();
@@ -48,7 +49,7 @@ This is read-only business validation. Find recent, concrete, independent public
 
     const response = await fetch("https://api.exa.ai/search", {
       method:"POST",
-      headers:{"x-api-key":process.env.EXA_API_KEY,"Content-Type":"application/json"},
+      headers:{"x-api-key":exaKey,"Content-Type":"application/json"},
       body:JSON.stringify({query,type:"deep",numResults:6}),
       cache:"no-store"
     });
@@ -58,7 +59,7 @@ This is read-only business validation. Find recent, concrete, independent public
     if (!response.ok) return NextResponse.json({ok:false,error:readableError(data?.error || data?.message || data?.raw,`Validation research failed: ${response.status}`)},{status:502});
 
     const results = Array.isArray(data?.results) ? data.results : [];
-    const sources = results.map((r:any)=>({title:String(r?.title||"Source"),url:String(r?.url||"").trim(),text:String(r?.text||r?.highlight||r?.summary||"").trim()})).filter((s:any)=>/^https?:\\/\\//.test(s.url));
+    const sources = results.map((r:any)=>({title:String(r?.title||"Source"),url:String(r?.url||"").trim(),text:String(r?.text||r?.highlight||r?.summary||"").trim()})).filter((s:any)=>/^https?:\/\//.test(s.url));
     const answer = String(data?.answer || data?.output?.content || sources.map((s:any)=>`${s.title}: ${s.text}`).join(" ")).trim();
     if (!answer && sources.length === 0) return NextResponse.json({ok:false,error:"Validation research returned no usable evidence."},{status:502});
 
