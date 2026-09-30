@@ -61,7 +61,8 @@ export async function askBusinessBrain(input: {
     "If verification has UNVERIFIED dimensions, verify one dimension first.",
     "If verification is complete and a monetization-plan task is READY, choose Build monetization plan.",
     "If an outreach-pack task is READY, choose Prepare outreach pack.",
-    "If an approved outreach task is READY, choose Send approved outreach, but permission must be OWNER_APPROVAL_REQUIRED.\n    "If a business-result learning task is READY, choose Learn from business result.",
+    "If an approved outreach task is READY, choose Send approved outreach, but permission must be OWNER_APPROVAL_REQUIRED.",
+    "If a business-result learning task is READY, choose Learn from business result.",
     "",
     "LIVE LEDGER:",
     JSON.stringify(input)
