@@ -57,35 +57,54 @@ export async function POST(req: Request) {
     if (ownerCookie) internalHeaders["cookie"] = ownerCookie;
     if (oidcToken) internalHeaders["x-vercel-trusted-oidc-idp-token"] = oidcToken;
 
-    const discovery = await fetch(`${origin}/api/discovery`, {
-      method: "POST",
-      headers: internalHeaders,
-      body: JSON.stringify({ goal, marketScope }),
-      cache: "no-store",
-    });
-    const result = await discovery.json().catch(() => ({}));
-    if (!discovery.ok || !result.ok) {
-      return NextResponse.json({
-        ok:false, stage:"RESEARCH",
-        error:readableError(result?.error,"The agent could not complete its research stage.")
-      },{status:discovery.status||502});
-    }
-
-    const next=await fetch(`${origin}/api/agent/next-action`,{headers:internalHeaders,cache:"no-store"});
-    let nextResult=await next.json().catch(()=>({}));
+    // Continue existing agent work before starting a fresh research run.
+    // Otherwise every Run click would create new UNVERIFIED opportunities and
+    // keep the global next action at "Verify demand" instead of progressing.
+    let next=await fetch(`${origin}/api/agent/next-action`,{headers:internalHeaders,cache:"no-store"});
+    let nextResult=await next.json().catch(() => ({}));
     let followUp=await executeSafeFollowUp(origin,internalHeaders,nextResult?.action);
 
     if(followUp && (!followUp.response.ok || followUp.result?.ok===false)){
       return NextResponse.json({
         ok:false,stage:"AGENT_FOLLOW_UP",
-        error:readableError(followUp.result?.error,"The agent completed research but its next safe action failed."),
-        run:{
-          goal,marketScope,stage:"RESEARCH_COMPLETE",
-          researchRunId:result.runId||null,
-          opportunitiesCreated:Array.isArray(result.promotedOpportunities)?result.promotedOpportunities.length:0
-        },
+        error:readableError(followUp.result?.error,"The agent's next safe action failed."),
+        run:{ goal,marketScope,stage:"AGENT_STEP_FAILED",researchRunId:null,opportunitiesCreated:0 },
         action:nextResult?.action||null
       },{status:followUp.response.status||502});
+    }
+
+    let result:any = {};
+    if (!followUp) {
+      const discovery = await fetch(`${origin}/api/discovery`, {
+        method: "POST",
+        headers: internalHeaders,
+        body: JSON.stringify({ goal, marketScope }),
+        cache: "no-store",
+      });
+      result = await discovery.json().catch(() => ({}));
+      if (!discovery.ok || !result.ok) {
+        return NextResponse.json({
+          ok:false, stage:"RESEARCH",
+          error:readableError(result?.error,"The agent could not complete its research stage.")
+        },{status:discovery.status||502});
+      }
+
+      next=await fetch(`${origin}/api/agent/next-action`,{headers:internalHeaders,cache:"no-store"});
+      nextResult=await next.json().catch(() => ({}));
+      followUp=await executeSafeFollowUp(origin,internalHeaders,nextResult?.action);
+
+      if(followUp && (!followUp.response.ok || followUp.result?.ok===false)){
+        return NextResponse.json({
+          ok:false,stage:"AGENT_FOLLOW_UP",
+          error:readableError(followUp.result?.error,"The agent completed research but its next safe action failed."),
+          run:{
+            goal,marketScope,stage:"RESEARCH_COMPLETE",
+            researchRunId:result.runId||null,
+            opportunitiesCreated:Array.isArray(result.promotedOpportunities)?result.promotedOpportunities.length:0
+          },
+          action:nextResult?.action||null
+        },{status:followUp.response.status||502});
+      }
     }
 
     if(followUp){
