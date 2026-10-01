@@ -89,8 +89,8 @@ export async function POST(req: Request) {
     );
     const verificationRow = Array.isArray(verificationRows) ? verificationRows[0] : null;
 
-    if (verificationRow?.id) {
-      await supabaseRequest("opportunity_verification?id=eq." + encodeURIComponent(String(verificationRow.id)), {
+    if (verificationRow?.opportunity_id) {
+      await supabaseRequest("opportunity_verification?opportunity_id=eq." + encodeURIComponent(opportunityId), {
         method: "PATCH",
         body: JSON.stringify({ [dimension]: "CHECKED" }),
         headers: { "Prefer": "return=minimal" },
