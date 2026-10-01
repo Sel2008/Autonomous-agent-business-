@@ -12,7 +12,7 @@ const BOOTSTRAP_OPPORTUNITIES=new Set(["lead-research","micro-service","online-t
 const BOOTSTRAP_TASKS=new Set(["t1","t2","t3"]);
 const BOOTSTRAP_EVIDENCE=new Set(["e1"]);
 
-function levelValue(v:Verification[keyof Verification]){return v==="STRONG"?1:v==="CHECKED"?0.5:0}
+function levelValue(v:Verification[keyof Verification]){return v==="STRONG"||v==="CHECKED"?1:0}
 function verificationPercent(v:Verification){const keys:(keyof Verification)[]=["demand","access","margin","repeatability","risk"];return Math.round(keys.reduce((n,k)=>n+levelValue(v[k]),0)/keys.length*100)}
 
 export default function Home(){
