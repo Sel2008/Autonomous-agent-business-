@@ -38,17 +38,36 @@ export function getNextAction(input: {
   }
 
   const verificationEntries = Object.entries(input.verification);
-  for (const [opportunityId, dimensions] of verificationEntries) {
-    const nextDimension = Object.entries(dimensions).find(([, value]) => value === "UNVERIFIED");
-    if (nextDimension) {
-      return {
-        opportunityId,
-        action: `Verify ${nextDimension[0]}`,
-        reason: "The opportunity still has an unverified verification dimension.",
-        permission: "READ_ONLY",
-        status: "READY",
-      };
-    }
+
+  // Finish verification for the opportunity already being worked on before
+  // jumping to a new candidate. This makes repeated runs progress through the
+  // dimensions for one opportunity instead of repeatedly starting at demand
+  // on different opportunities.
+  const candidates = verificationEntries
+    .map(([opportunityId, dimensions], index) => {
+      const dimensionsList = Object.entries(dimensions);
+      const nextDimension = dimensionsList.find(([, value]) => value === "UNVERIFIED");
+      const checkedCount = dimensionsList.filter(
+        ([, value]) => value === "CHECKED" || value === "STRONG"
+      ).length;
+      return { opportunityId, nextDimension, checkedCount, index };
+    })
+    .filter((x) => Boolean(x.nextDimension))
+    .sort((a, b) => b.checkedCount - a.checkedCount || a.index - b.index);
+
+  const verificationTarget = candidates[0];
+  if (verificationTarget?.nextDimension) {
+    const [dimension] = verificationTarget.nextDimension;
+    return {
+      opportunityId: verificationTarget.opportunityId,
+      action: `Verify ${dimension}`,
+      reason:
+        verificationTarget.checkedCount > 0
+          ? "Continue verification on the opportunity already being validated before starting a new candidate."
+          : "The opportunity still has an unverified verification dimension.",
+      permission: "READ_ONLY",
+      status: "READY",
+    };
   }
 
   const ready = input.tasks.find((t) => t.status === "READY");
