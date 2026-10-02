@@ -39,6 +39,38 @@ export function getNextAction(input: {
 
   const verificationEntries = Object.entries(input.verification);
 
+  // Once an opportunity is fully verified, work its ready follow-up task
+  // before starting verification on another candidate.
+  const fullyVerifiedIds = new Set(
+    verificationEntries
+      .filter(([, dimensions]) =>
+        ["demand", "access", "margin", "repeatability", "risk"].every(
+          (key) => dimensions[key] === "CHECKED" || dimensions[key] === "STRONG"
+        )
+      )
+      .map(([opportunityId]) => opportunityId)
+  );
+
+  const verifiedFollowUp = input.tasks.find(
+    (t) =>
+      t.status === "READY" &&
+      fullyVerifiedIds.has(t.opportunity_id) &&
+      (/^Build monetization plan/i.test(t.title) || /^Prepare outreach pack/i.test(t.title))
+  );
+
+  if (verifiedFollowUp) {
+    const consequential = /^Prepare outreach pack/i.test(verifiedFollowUp.title);
+    return {
+      opportunityId: verifiedFollowUp.opportunity_id,
+      action: verifiedFollowUp.title,
+      reason: consequential
+        ? "Verification is complete, and the next outreach step is consequential and requires owner approval."
+        : "Verification is complete, so the agent can move to the opportunity's monetization plan before validating another candidate.",
+      permission: consequential ? "OWNER_APPROVAL_REQUIRED" : "READ_ONLY",
+      status: "READY",
+    };
+  }
+
   // Finish verification for the opportunity already being worked on before
   // jumping to a new candidate. This makes repeated runs progress through the
   // dimensions for one opportunity instead of repeatedly starting at demand
