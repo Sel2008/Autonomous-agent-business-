@@ -119,6 +119,10 @@ export async function POST(req: Request) {
       throw new Error("Validation evidence was found, but the verification state did not persist in Supabase.");
     }
 
+    const fullyVerified = ["demand", "access", "margin", "repeatability", "risk"].every(
+      (key) => String(persisted?.[key] || "UNVERIFIED") === "CHECKED" || String(persisted?.[key] || "UNVERIFIED") === "STRONG"
+    );
+
     await supabaseRequest("evidence", {
       method: "POST",
       body: JSON.stringify({
@@ -151,6 +155,33 @@ export async function POST(req: Request) {
       });
     }
 
+    // When all five dimensions are verified, create the next agent-owned
+    // monetization step for this same opportunity. This prevents the agent
+    // from abandoning a fully verified candidate while validating others.
+    let monetizationTaskCreated = false;
+    if (fullyVerified) {
+      const allTasks = await supabaseRequest(
+        "tasks?opportunity_id=eq." + encodeURIComponent(opportunityId) + "&select=*"
+      );
+      const hasMonetizationTask = Array.isArray(allTasks) && allTasks.some(
+        (row: any) => /build monetization plan/i.test(String(row?.title || ""))
+      );
+      if (!hasMonetizationTask) {
+        const taskId = "research-" + opportunityId.replace(/[^a-zA-Z0-9_-]/g, "-") + "-monetization";
+        await supabaseRequest("tasks", {
+          method: "POST",
+          body: JSON.stringify({
+            id: taskId,
+            title: "Build monetization plan: " + String(opportunity.name || "opportunity"),
+            status: "READY",
+            opportunity_id: opportunityId
+          }),
+          headers: { "Prefer": "return=minimal" },
+        });
+        monetizationTaskCreated = true;
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       opportunityId,
@@ -159,6 +190,8 @@ export async function POST(req: Request) {
       finding,
       sources: uniqueSources,
       taskCompleted: Boolean(validationTask?.id),
+      fullyVerified,
+      monetizationTaskCreated,
     });
   } catch (error) {
     return NextResponse.json({ ok: false, error: readableError(error, "Agent verification failed.") }, { status: 500 });
