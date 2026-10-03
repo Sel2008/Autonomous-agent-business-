@@ -76,8 +76,18 @@ export async function GET() {
         .filter((t:any)=>String(t?.status||"")==="READY")
         .map((t:any)=>String(t?.title||"").toLowerCase());
 
+      const fullyVerifiedIds = new Set(
+        Object.entries(grouped)
+          .filter(([,dimensions]:any) =>
+            ["demand","access","margin","repeatability","risk"].every(
+              (key) => dimensions[key] === "CHECKED" || dimensions[key] === "STRONG"
+            )
+          )
+          .map(([id]) => id)
+      );
       const validForLedger =
-        (ai.action === "Build monetization plan" && readyTitles.some(t=>t.includes("build monetization plan"))) ||
+        (ai.action === "Build monetization plan" &&
+          (readyTitles.some(t=>t.includes("build monetization plan")) || fullyVerifiedIds.has(String(ai.opportunityId)))) ||
         (ai.action === "Prepare outreach pack" && readyTitles.some(t=>t.includes("prepare outreach pack"))) ||
         (ai.action === "Send approved outreach" && readyTitles.some(t=>t.includes("send approved outreach")) &&
           liveApprovals.some((a:any)=>a?.status==="APPROVED" && String(a?.title||"").toLowerCase().includes("approve sending outreach"))) ||
