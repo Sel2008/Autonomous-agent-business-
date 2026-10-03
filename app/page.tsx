@@ -27,25 +27,40 @@ export default function Home(){
  const [tab,setTab]=useState<"overview"|"evidence"|"scoring">("overview");
  const [selected,setSelected]=useState<string|null>(null);
  const [missionSaved,setMissionSaved]=useState(false);
+ const [agentRun,setAgentRun]=useState<any>(null);
 
  const load=async()=>{
   try{
-   const r=await fetch("/api/ledger",{cache:"no-store"});
-   const s=await r.json();
-   if(!s.configured){setDbStatus("local");return}
-   const liveOpps=Array.isArray(s.opportunities)?s.opportunities.filter((x:any)=>!BOOTSTRAP_OPPORTUNITIES.has(x.id)):[];
-   const liveTasks=Array.isArray(s.tasks)?s.tasks.filter((x:any)=>!BOOTSTRAP_TASKS.has(x.id)&&!BOOTSTRAP_OPPORTUNITIES.has(x.opportunity_id)):[];
-   const liveEvidence=Array.isArray(s.evidence)?s.evidence.filter((x:any)=>!BOOTSTRAP_EVIDENCE.has(x.id)&&!BOOTSTRAP_OPPORTUNITIES.has(x.opportunity_id)):[];
+   const [ledgerResponse,actionResponse,runResponse]=await Promise.all([
+    fetch("/api/ledger",{cache:"no-store"}),
+    fetch("/api/agent/next-action",{cache:"no-store"}),
+    fetch("/api/discovery",{cache:"no-store"})
+   ]);
+   const ledger=await ledgerResponse.json();
+   const action=await actionResponse.json().catch(()=>({}));
+   const history=await runResponse.json().catch(()=>({}));
+   setAgentAction(action.action||null);
+   const latest=Array.isArray(history.runs)
+     ? history.runs.find((x:any)=>x?.mode==="AGENT_RUN") || history.runs[0]
+     : null;
+   if(latest) setAgentRun(latest);
+   if(!ledger.configured){setDbStatus("local");return}
+   const liveOpps=Array.isArray(ledger.opportunities)?ledger.opportunities.filter((x:any)=>!BOOTSTRAP_OPPORTUNITIES.has(x.id)):[];
+   const liveTasks=Array.isArray(ledger.tasks)?ledger.tasks.filter((x:any)=>!BOOTSTRAP_TASKS.has(x.id)&&!BOOTSTRAP_OPPORTUNITIES.has(x.opportunity_id)):[];
+   const liveEvidence=Array.isArray(ledger.evidence)?ledger.evidence.filter((x:any)=>!BOOTSTRAP_EVIDENCE.has(x.id)&&!BOOTSTRAP_OPPORTUNITIES.has(x.opportunity_id)):[];
    setOpportunities(liveOpps.map((x:any)=>({id:x.id,name:x.name,model:x.model,capital:x.capital,status:x.status,why:x.why,next:x.next_action||x.next||"Continue validation."})));
    setTasks(liveTasks.map((x:any)=>({id:x.id,title:x.title,status:x.status,opportunityId:x.opportunity_id})));
-   setApprovals(Array.isArray(s.approvals)?s.approvals:[]);
+   setApprovals(Array.isArray(ledger.approvals)?ledger.approvals:[]);
    setEvidence(liveEvidence.map((x:any)=>({id:x.id,opportunityId:x.opportunity_id,type:x.type,claim:x.claim,source:x.source,checked:x.checked_on,quality:x.quality,notes:x.notes||""})));
-   if(Array.isArray(s.verification)){const m:Record<string,Verification>={};s.verification.forEach((x:any)=>{if(!BOOTSTRAP_OPPORTUNITIES.has(x.opportunity_id))m[x.opportunity_id]={demand:x.demand,access:x.access,margin:x.margin,repeatability:x.repeatability,risk:x.risk}});setVerification(m)}
+   if(Array.isArray(ledger.verification)){const m:Record<string,Verification>={};ledger.verification.forEach((x:any)=>{if(!BOOTSTRAP_OPPORTUNITIES.has(x.opportunity_id))m[x.opportunity_id]={demand:x.demand,access:x.access,margin:x.margin,repeatability:x.repeatability,risk:x.risk}});setVerification(m)}
    setDbStatus("connected");
   }catch{setDbStatus("local")}
-  try{const r=await fetch("/api/agent/next-action",{cache:"no-store"});const s=await r.json();setAgentAction(s.action)}catch{}
  };
- useEffect(()=>{load()},[]);
+ useEffect(()=>{
+  load();
+  const timer=window.setInterval(load,2000);
+  return()=>window.clearInterval(timer);
+ },[]);
 
  const complete=tasks.filter(t=>t.status==="COMPLETE").length;
  const checked=evidence.filter(e=>e.quality!=="UNVERIFIED").length;
@@ -83,14 +98,14 @@ export default function Home(){
   </section>
 
   <section className="grid metrics">
-   <div className="card"><div className="muted">Agent status</div><div className="metric" style={{fontSize:24}}>SUPERVISED</div><div className="muted">The current test build still requires an owner to start research; internal work is displayed as agent work.</div></div>
+   <div className="card"><div className="muted">Agent status</div><div className="metric" style={{fontSize:24}}>{agentRun?.status||"READY"}</div><div className="muted">{agentRun?.summary||"The agent is ready for a mission."}</div></div>
    <div className="card"><div className="muted">Live opportunities</div><div className="metric">{opportunities.length}</div><div className="muted">Research-generated records only.</div></div>
    <div className="card"><div className="muted">Pending approvals</div><div className="metric">{pendingApprovals}</div><div className="muted">Owner decisions required.</div></div>
   </section>
 
   <section className="section card">
    <div className="eyebrow">AGENT ACTIVITY</div><h2>What the agent is doing</h2>
-   <div className="notice"><strong>Next agent action:</strong> {agentAction?.action||"Reading the live ledger…"}<br/><span className="muted">{agentAction?.reason||"The Agent Core is checking the current state."} · Permission: {agentAction?.permission||"READ_ONLY"}</span></div>
+   <div className="notice"><strong>Live agent status:</strong> {agentRun?.status||"READY"}<br/><strong>{agentRun?.summary||agentAction?.action||"Reading the live ledger…"}</strong><br/><span className="muted">{agentAction?.reason||"The Agent Core is checking the current state."} · Permission: {agentAction?.permission||"READ_ONLY"}</span></div>
    <div className="grid two" style={{marginTop:16}}>
     <div><div className="muted">Next validation task</div><strong>{nextTask?.title||"No live validation task currently queued."}</strong></div>
     <div><div className="muted">Task history</div><strong>{complete} completed · {tasks.length} live tasks</strong></div>
