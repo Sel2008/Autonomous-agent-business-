@@ -162,7 +162,7 @@ export async function POST(req: Request) {
 
     // The browser receives the run id immediately. The agent work belongs to the
     // server invocation, not to the Research page that started it.
-    after(processAgentRun(origin,internalHeaders,runId,goal,marketScope));
+    after(()=>processAgentRun(origin,internalHeaders,runId,goal,marketScope));
 
     return NextResponse.json({
       ok:true,
