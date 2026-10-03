@@ -23,6 +23,16 @@ async function validSession(token: string | undefined, secret: string | undefine
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   if (pathname === "/login" || pathname.startsWith("/api/auth")) return NextResponse.next();
+
+  // The durable agent worker is called by GitHub Actions, not by a browser
+  // session. Let it through only when the CRON_SECRET bearer token matches.
+  if (
+    pathname === "/api/agent/worker" &&
+    process.env.CRON_SECRET &&
+    request.headers.get("authorization") === `Bearer ${process.env.CRON_SECRET}`
+  ) {
+    return NextResponse.next();
+  }
   if (pathname.startsWith("/_next/") || pathname === "/favicon.ico") return NextResponse.next();
 
   const authenticated = await validSession(request.cookies.get(COOKIE_NAME)?.value, process.env.AUTH_SECRET);
