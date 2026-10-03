@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { getVercelOidcToken } from "@vercel/oidc";
+import { supabaseConfigured, supabaseRequest } from "../../../../lib/supabase";
 
 function readableError(value: unknown, fallback: string) {
   if (typeof value === "string" && value.trim()) return value;
@@ -8,6 +9,19 @@ function readableError(value: unknown, fallback: string) {
     try { return JSON.stringify(value); } catch { return fallback; }
   }
   return fallback;
+}
+
+async function updateRun(runId:string, summary:string, status?:string) {
+  if (!supabaseConfigured() || !runId) return;
+  await supabaseRequest(`discovery_runs?id=eq.${encodeURIComponent(runId)}`, {
+    method:"PATCH",
+    body:JSON.stringify({
+      ...(status ? {status} : {}),
+      summary,
+      ...(status==="COMPLETE" || status==="FAILED" ? {completed_at:new Date().toISOString()} : {})
+    }),
+    headers:{"Prefer":"return=minimal"}
+  }).catch(()=>{});
 }
 
 async function executeSafeFollowUp(origin:string, headers:HeadersInit, action:any) {
@@ -43,107 +57,132 @@ async function executeSafeFollowUp(origin:string, headers:HeadersInit, action:an
   return null;
 }
 
+async function processAgentRun(origin:string, headers:HeadersInit, runId:string, goal:string, marketScope:string) {
+  try {
+    await updateRun(runId,"Agent started. Researching the mission…","RUNNING");
+
+    const discovery=await fetch(`${origin}/api/discovery`,{
+      method:"POST",
+      headers,
+      body:JSON.stringify({goal,marketScope,existingRunId:runId}),
+      cache:"no-store"
+    });
+    const result:any=await discovery.json().catch(()=>({}));
+
+    if(!discovery.ok || !result.ok){
+      await updateRun(runId,`Research failed: ${readableError(result?.error,"The agent could not complete research.")}`,"FAILED");
+      return;
+    }
+
+    await updateRun(runId,`Research complete. ${Array.isArray(result.promotedOpportunities) ? result.promotedOpportunities.length : 0} opportunities entered the live ledger. Starting verification…`,"RUNNING");
+
+    let autonomousSteps=0;
+    let next=await fetch(`${origin}/api/agent/next-action`,{headers,cache:"no-store"});
+    let nextResult=await next.json().catch(()=>({}));
+
+    while (autonomousSteps < 30) {
+      const action=nextResult?.action;
+      if (!action || action.status !== "READY") {
+        if (action?.status==="WAITING" || action?.permission==="OWNER_APPROVAL_REQUIRED") {
+          await updateRun(runId,`Agent paused: ${String(action.action||"Owner approval required")} — waiting for your decision.`,"WAITING_APPROVAL");
+        } else {
+          await updateRun(runId,`Agent reached a stable state: ${String(action?.action||"No safe action currently ready")}.`, "COMPLETE");
+        }
+        return;
+      }
+
+      const actionName=String(action.action||"");
+      if(action.permission==="OWNER_APPROVAL_REQUIRED" || actionName==="Wait for owner approval" || /^Send approved outreach/i.test(actionName)){
+        await updateRun(runId,`Agent paused: ${actionName}. Owner approval is required before the next consequential step.`,"WAITING_APPROVAL");
+        return;
+      }
+
+      if(actionName==="Select verified opportunity for monetization"){
+        await updateRun(runId,"All current opportunities are verified. The business brain is comparing the evidence and selecting one for monetization…","RUNNING");
+        const refreshed=await fetch(`${origin}/api/agent/next-action`,{headers,cache:"no-store"});
+        nextResult=await refreshed.json().catch(()=>nextResult);
+        continue;
+      }
+
+      await updateRun(runId,`Agent is working: ${actionName}${action.opportunityId && action.opportunityId!=="system" ? " · "+action.opportunityId : ""}`,"RUNNING");
+
+      const followUp=await executeSafeFollowUp(origin,headers,action);
+      if(!followUp){
+        await updateRun(runId,`Agent stopped safely at: ${actionName}.`,"COMPLETE");
+        return;
+      }
+
+      autonomousSteps += 1;
+      if(!followUp.response.ok || followUp.result?.ok===false){
+        await updateRun(runId,`Agent step failed: ${readableError(followUp.result?.error,"Safe agent step failed.")}`,"FAILED");
+        return;
+      }
+
+      const refreshed=await fetch(`${origin}/api/agent/next-action`,{headers,cache:"no-store"});
+      nextResult=await refreshed.json().catch(()=>nextResult);
+    }
+
+    await updateRun(runId,"Agent reached its safe-step checkpoint and will not perform further work without another controlled worker invocation.","COMPLETE");
+  } catch(error) {
+    await updateRun(runId,`Agent run failed: ${readableError(error,"Agent run failed.")}`,"FAILED");
+  }
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
     const goal = String(body?.goal || "").trim();
     const marketScope = String(body?.marketScope || "Global").trim();
-    if (!goal) return NextResponse.json({ ok: false, error: "A mission is required." }, { status: 400 });
+    if (!goal) return NextResponse.json({ ok:false, error:"A mission is required." }, { status:400 });
 
     const origin = new URL(req.url).origin;
     const oidcToken = await getVercelOidcToken().catch(() => null);
     const ownerCookie = req.headers.get("cookie");
-    const internalHeaders: HeadersInit = { "Content-Type": "application/json" };
-    if (ownerCookie) internalHeaders["cookie"] = ownerCookie;
-    if (oidcToken) internalHeaders["x-vercel-trusted-oidc-idp-token"] = oidcToken;
+    const internalHeaders: HeadersInit = { "Content-Type":"application/json" };
+    if(ownerCookie) internalHeaders["cookie"]=ownerCookie;
+    if(oidcToken) internalHeaders["x-vercel-trusted-oidc-idp-token"]=oidcToken;
 
-    let result:any = {};
-    let autonomousSteps=0;
-    let lastFollowUp:any=null;
-
-    let next=await fetch(`${origin}/api/agent/next-action`,{headers:internalHeaders,cache:"no-store"});
-    let nextResult=await next.json().catch(() => ({}));
-
-    // If there is no existing safe work, start the requested research mission.
-    if (nextResult?.action?.action === "Review ledger for new work") {
-      const discovery=await fetch(`${origin}/api/discovery`,{
-        method:"POST",
-        headers:internalHeaders,
-        body:JSON.stringify({goal,marketScope}),
-        cache:"no-store"
-      });
-      result=await discovery.json().catch(()=>({}));
-      if(!discovery.ok || !result.ok){
-        return NextResponse.json({
-          ok:false,stage:"RESEARCH",
-          error:readableError(result?.error,"The agent could not complete its research stage.")
-        },{status:discovery.status||502});
-      }
-      next=await fetch(`${origin}/api/agent/next-action`,{headers:internalHeaders,cache:"no-store"});
-      nextResult=await next.json().catch(()=>({}));
+    if(!supabaseConfigured()){
+      return NextResponse.json({ok:false,error:"The live database is required for a page-independent agent run."},{status:503});
     }
 
-    // One Run can advance many safe internal steps. It stops at an owner
-    // approval boundary or at the safety cap.
-    while (autonomousSteps < 30) {
-      const action=nextResult?.action;
-      if (!action || action.status !== "READY") break;
+    const created=await supabaseRequest("discovery_runs",{
+      method:"POST",
+      body:JSON.stringify({
+        goal,
+        market_scope:marketScope,
+        mode:"AGENT_RUN",
+        status:"QUEUED",
+        summary:"Agent run queued…"
+      }),
+      headers:{"Prefer":"return=representation"}
+    });
+    const runId=created?.[0]?.id;
+    if(!runId) throw new Error("Agent run could not be recorded.");
 
-      const actionName=String(action.action||"");
-      if (
-        action.permission === "OWNER_APPROVAL_REQUIRED" ||
-        actionName === "Wait for owner approval" ||
-        /^Send approved outreach/i.test(actionName)
-      ) break;
-
-      // This is a planning signal, not an executable action. Let the business
-      // brain compare the fully verified opportunities and choose exactly one.
-      if (actionName === "Select verified opportunity for monetization") {
-        const refreshed=await fetch(`${origin}/api/agent/next-action`,{headers:internalHeaders,cache:"no-store"});
-        nextResult=await refreshed.json().catch(()=>nextResult);
-        continue;
-      }
-
-      const followUp=await executeSafeFollowUp(origin,internalHeaders,action);
-      if (!followUp) break;
-
-      lastFollowUp=followUp;
-      autonomousSteps += 1;
-
-      if (!followUp.response.ok || followUp.result?.ok===false) {
-        return NextResponse.json({
-          ok:false,
-          stage:"AGENT_FOLLOW_UP",
-          error:readableError(followUp.result?.error,"Safe agent step failed."),
-          run:{
-            goal,marketScope,
-            stage:"AGENT_STEP_FAILED",
-            researchRunId:result.runId||null,
-            opportunitiesCreated:Array.isArray(result.promotedOpportunities)?result.promotedOpportunities.length:0,
-            autonomousSteps
-          },
-          action:nextResult?.action||null
-        },{status:followUp.response.status||502});
-      }
-
-      const refreshed=await fetch(`${origin}/api/agent/next-action`,{headers:internalHeaders,cache:"no-store"});
-      nextResult=await refreshed.json().catch(()=>nextResult);
-    }
+    // The browser receives the run id immediately. The agent work belongs to the
+    // server invocation, not to the Research page that started it.
+    after(processAgentRun(origin,internalHeaders,runId,goal,marketScope));
 
     return NextResponse.json({
       ok:true,
       run:{
-        goal,marketScope,
-        stage:lastFollowUp?"AGENT_AUTONOMOUS_PROGRESS":result.runId?"RESEARCH_COMPLETE":"AGENT_NO_SAFE_WORK",
-        researchRunId:result.runId||null,
-        opportunitiesCreated:Array.isArray(result.promotedOpportunities)?result.promotedOpportunities.length:0,
-        autonomousSteps
+        runId,
+        researchRunId:runId,
+        goal,
+        marketScope,
+        stage:"QUEUED",
+        autonomousSteps:0
       },
-      action:nextResult?.action||null,
-      actionStatus:nextResult?.action?.status||null,
-      brain:nextResult?.brain||"DETERMINISTIC"
+      action:{
+        opportunityId:"system",
+        action:"Agent run started",
+        reason:"The agent is now working independently of the current page. You can leave and return to the dashboard.",
+        permission:"READ_ONLY",
+        status:"IN_PROGRESS"
+      }
     });
   } catch(error) {
-    return NextResponse.json({ok:false,error:readableError(error,"Agent run failed")},{status:500});
+    return NextResponse.json({ok:false,error:readableError(error,"Agent run could not be started.")},{status:500});
   }
 }
