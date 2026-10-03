@@ -155,32 +155,10 @@ export async function POST(req: Request) {
       });
     }
 
-    // When all five dimensions are verified, create the next agent-owned
-    // monetization step for this same opportunity. This prevents the agent
-    // from abandoning a fully verified candidate while validating others.
-    let monetizationTaskCreated = false;
-    if (fullyVerified) {
-      const allTasks = await supabaseRequest(
-        "tasks?opportunity_id=eq." + encodeURIComponent(opportunityId) + "&select=*"
-      );
-      const hasMonetizationTask = Array.isArray(allTasks) && allTasks.some(
-        (row: any) => /build monetization plan/i.test(String(row?.title || ""))
-      );
-      if (!hasMonetizationTask) {
-        const taskId = "research-" + opportunityId.replace(/[^a-zA-Z0-9_-]/g, "-") + "-monetization";
-        await supabaseRequest("tasks", {
-          method: "POST",
-          body: JSON.stringify({
-            id: taskId,
-            title: "Build monetization plan: " + String(opportunity.name || "opportunity"),
-            status: "READY",
-            opportunity_id: opportunityId
-          }),
-          headers: { "Prefer": "return=minimal" },
-        });
-        monetizationTaskCreated = true;
-      }
-    }
+    // Do not create monetization work for every fully verified candidate.
+    // The central business brain compares the complete verified set first and
+    // selects exactly one opportunity for the first monetization test.
+    const monetizationTaskCreated = false;
 
     return NextResponse.json({
       ok: true,
