@@ -83,6 +83,7 @@ export async function POST(req: Request) {
     catch { return NextResponse.json({ ok:false, configured:true, error:"The dashboard sent an invalid or empty JSON request body." }, { status:400 }); }
     const goal = String(body?.goal || "").trim();
     const marketScope = String(body.marketScope || "Global").trim();
+    const existingRunId = String(body?.existingRunId || "").trim();
     if (!goal) return NextResponse.json({ ok:false, error:"A research goal is required." }, { status:400 });
 
     const prompt = `Research goal: ${goal}\nMarket scope: ${marketScope}\n\nThis is a RESEARCH-ONLY test. Do not recommend contacting anyone, spending money, creating accounts, making commitments, or taking irreversible actions.\n\nFind concrete business or service opportunities that fit the goal. For every candidate, investigate FIVE separate dimensions: (1) demand, (2) customer access, (3) economics/monetization, (4) repeatability, and (5) risks/competition/compliance. For each dimension, clearly separate sourced evidence from inference and state when evidence is weak, conflicting, indirect, or missing.\n\nSet pursuitPriority from 0-100 using only the strength and completeness of the evidence across those five dimensions. Set confidence from 0-100 based on source quality, independence/corroboration, recency where relevant, and how much of the assessment is actually evidenced. Do not use arbitrary low scores just because this is an early test. Do not treat the priority score as a prediction of business success.\n\nInclude concrete risks clearly inside riskEvidence and give exactly one nextValidation step that would most efficiently resolve the biggest remaining uncertainty. Do not add source fields to the structured output; the application captures the source URLs separately from Exa's search results. Do not invent sources. The result should help an owner decide what deserves further investigation, while preserving uncertainty rather than hiding it.`;
@@ -110,12 +111,16 @@ export async function POST(req: Request) {
     const candidates: Candidate[] = Array.isArray(parsed?.candidates) ? parsed.candidates : [];
     const sourceUrls = extractExaResultSources(data);
     const resultUrls = sourceUrls.map((source) => source.url);
-    let runId:string | null = null;
+    let runId:string | null = existingRunId || null;
     let promotedOpportunities: { id:string; name:string; pursuitPriority:number; confidence:number }[] = [];
 
     if (supabaseConfigured()) {
-      const created = await supabaseRequest("discovery_runs", { method:"POST", body:JSON.stringify({ goal, market_scope:marketScope, mode:"RESEARCH_ONLY", status:"RUNNING", summary:"" }), headers:{"Prefer":"return=representation"} });
-      runId = created?.[0]?.id || null;
+      if (!runId) {
+        const created = await supabaseRequest("discovery_runs", { method:"POST", body:JSON.stringify({ goal, market_scope:marketScope, mode:"RESEARCH_ONLY", status:"RUNNING", summary:"" }), headers:{"Prefer":"return=representation"} });
+        runId = created?.[0]?.id || null;
+      } else {
+        await supabaseRequest("discovery_runs?id=eq."+encodeURIComponent(runId), { method:"PATCH", body:JSON.stringify({ status:"RUNNING", summary:"Research is running…" }), headers:{"Prefer":"return=minimal"} });
+      }
       if (!runId) throw new Error("Discovery run could not be recorded.");
       try {
         if (candidates.length > 0) {
@@ -194,20 +199,9 @@ export async function POST(req: Request) {
           });
           if (evidenceRows.length > 0) await supabaseRequest("evidence", { method:"POST", body:JSON.stringify(evidenceRows), headers:{"Prefer":"return=minimal"} });
 
-          const ranked = [...opportunityRows].sort((a,b) => b.priority - a.priority);
-          const first = ranked[0];
-          if (first) {
-            await supabaseRequest("tasks", {
-              method:"POST",
-              body:JSON.stringify({ id:`research-${runId}-next-validation`, title:`Validate research candidate: ${first.name}`, status:"READY", opportunity_id:first.id }),
-              headers:{"Prefer":"return=minimal"}
-            });
-            await supabaseRequest("tasks", {
-              method:"POST",
-              body:JSON.stringify({ id:`research-${runId}-monetization`, title:`Build monetization plan: ${first.name}`, status:"READY", opportunity_id:first.id }),
-              headers:{"Prefer":"return=minimal"}
-            });
-          }
+          // Verification owns the next step. Do not create a monetization task
+          // from research; the business brain selects one only after the full
+          // current research set is verified.
           promotedOpportunities = opportunityRows.map(({id,name,priority}) => ({ id, name, pursuitPriority:priority, confidence:normalizeScore(candidates.find((candidate) => String(candidate.name || "Unnamed opportunity") === name)?.confidence) }));
         }
         await supabaseRequest("discovery_runs?id=eq."+encodeURIComponent(runId), { method:"PATCH", body:JSON.stringify({ status:"COMPLETE", summary:String(summary), completed_at:new Date().toISOString() }), headers:{"Prefer":"return=minimal"} });
