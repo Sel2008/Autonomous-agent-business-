@@ -27,6 +27,14 @@ async function updateActiveRun(summary:string, status?:string) {
   }).catch(()=>{});
 }
 
+async function getActiveRun() {
+  if (!supabaseConfigured()) return null;
+  const rows = await supabaseRequest(
+    "discovery_runs?mode=eq.OWNER_APPROVAL_EXECUTION&status=in.(PENDING,RUNNING)&order=created_at.desc&limit=1&select=*"
+  ).catch(()=>[]);
+  return Array.isArray(rows) ? (rows[0] || null) : null;
+}
+
 async function runAction(origin:string, action:string, opportunityId:string) {
   if (/^Verify (demand|access|margin|repeatability|risk)$/.test(action)) {
     const dimension = action.replace(/^Verify /,"").toLowerCase() as Dimension;
@@ -94,7 +102,42 @@ export async function POST(req: Request) {
 
   try {
     const origin = new URL(req.url).origin;
-    const nextResponse = await fetch(`${origin}/api/agent/next-action`, { cache:"no-store" });
+    const activeRun = await getActiveRun();
+
+    // A newly created run is durable in Supabase. The heartbeat owns research,
+    // so the run never depends on the browser or Next.js after().
+    if (activeRun && activeRun.status === "PENDING" && String(activeRun.summary || "").startsWith("Agent run queued")) {
+      await updateActiveRun("Agent started. Researching the mission…","RUNNING");
+      const discovery = await fetch(origin + "/api/discovery", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          goal:String(activeRun.goal || ""),
+          marketScope:String(activeRun.market_scope || "Global"),
+          existingRunId:String(activeRun.id)
+        }),
+        cache:"no-store"
+      });
+      const result:any = await discovery.json().catch(()=>({}));
+      if (!discovery.ok || !result.ok) {
+        const error = String(result?.error || "The agent could not complete research.");
+        await updateActiveRun("Research failed: " + error,"FAILED");
+        return NextResponse.json({ok:false,worker:"agent-heartbeat",stage:"RESEARCH",error},{status:discovery.status || 502});
+      }
+      await updateActiveRun(
+        "Research complete. " + (Array.isArray(result.promotedOpportunities) ? result.promotedOpportunities.length : 0) + " opportunities entered the live ledger. Starting verification…",
+        "RUNNING"
+      );
+      return NextResponse.json({
+        ok:true,
+        worker:"agent-heartbeat",
+        stage:"RESEARCH",
+        message:"Research completed. The next heartbeat will continue with autonomous verification.",
+        promotedOpportunities:result.promotedOpportunities || []
+      });
+    }
+
+    const nextResponse = await fetch(origin + "/api/agent/next-action", { cache:"no-store" });
     const next = await nextResponse.json().catch(()=>({}));
     const actionObject = next?.action || {};
     const action = String(actionObject?.action || "");
