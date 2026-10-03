@@ -93,7 +93,7 @@ async function processAgentRun(origin:string, headers:HeadersInit, runId:string,
 
       const actionName=String(action.action||"");
       if(action.permission==="OWNER_APPROVAL_REQUIRED" || actionName==="Wait for owner approval" || /^Send approved outreach/i.test(actionName)){
-        await updateRun(runId,`Agent paused: ${actionName}. Owner approval is required before the next consequential step.`,"WAITING_APPROVAL");
+        await updateRun(runId,`Agent paused: ${actionName}. Owner approval is required before the next consequential step.`,"PENDING");
         return;
       }
 
