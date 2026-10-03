@@ -41,7 +41,7 @@ export default function Home(){
    const history=await runResponse.json().catch(()=>({}));
    setAgentAction(action.action||null);
    const latest=Array.isArray(history.runs)
-     ? history.runs.find((x:any)=>x?.mode==="AGENT_RUN") || history.runs[0]
+     ? history.runs.find((x:any)=>x?.mode==="AGENT_RUN" || x?.mode==="OWNER_APPROVAL_EXECUTION") || history.runs[0]
      : null;
    if(latest) setAgentRun(latest);
    if(!ledger.configured){setDbStatus("local");return}
