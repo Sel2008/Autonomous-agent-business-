@@ -66,6 +66,9 @@ export async function GET() {
     if (deterministic.status === "WAITING" || /^Verify /.test(deterministic.action)) {
       return NextResponse.json({ configured:true, brain:"DETERMINISTIC", action:deterministic });
     }
+    // "Select verified opportunity..." is a planning signal. Let the AI brain
+    // compare the complete verified set and return the actual monetization action.
+
 
     const ai = await askBusinessBrain(state);
     if (ai) {
