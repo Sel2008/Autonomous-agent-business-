@@ -84,7 +84,7 @@ async function processAgentRun(origin:string, headers:HeadersInit, runId:string,
       const action=nextResult?.action;
       if (!action || action.status !== "READY") {
         if (action?.status==="WAITING" || action?.permission==="OWNER_APPROVAL_REQUIRED") {
-          await updateRun(runId,`Agent paused: ${String(action.action||"Owner approval required")} — waiting for your decision.`,"WAITING_APPROVAL");
+          await updateRun(runId,`Agent paused: ${String(action.action||"Owner approval required")} — waiting for your decision.`,"PENDING");
         } else {
           await updateRun(runId,`Agent reached a stable state: ${String(action?.action||"No safe action currently ready")}.`, "COMPLETE");
         }
@@ -151,8 +151,8 @@ export async function POST(req: Request) {
       body:JSON.stringify({
         goal,
         market_scope:marketScope,
-        mode:"AGENT_RUN",
-        status:"QUEUED",
+        mode:"OWNER_APPROVAL_EXECUTION",
+        status:"PENDING",
         summary:"Agent run queued…"
       }),
       headers:{"Prefer":"return=representation"}
