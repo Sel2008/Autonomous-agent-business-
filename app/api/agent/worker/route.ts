@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { supabaseConfigured, supabaseRequest } from "../../../../lib/supabase";
 
 type Dimension = "demand" | "access" | "margin" | "repeatability" | "risk";
 
@@ -6,6 +7,24 @@ function authorized(req: Request) {
   const secret = process.env.CRON_SECRET;
   if (!secret) return false;
   return req.headers.get("authorization") === `Bearer ${secret}`;
+}
+
+async function updateActiveRun(summary:string, status?:string) {
+  if (!supabaseConfigured()) return;
+  const rows = await supabaseRequest(
+    "discovery_runs?mode=eq.OWNER_APPROVAL_EXECUTION&order=created_at.desc&limit=1&select=id,status"
+  ).catch(()=>[]);
+  const run = Array.isArray(rows) ? rows[0] : null;
+  if (!run?.id) return;
+  await supabaseRequest("discovery_runs?id=eq." + encodeURIComponent(String(run.id)), {
+    method:"PATCH",
+    body:JSON.stringify({
+      ...(status ? {status} : {}),
+      summary,
+      ...(status==="COMPLETE" || status==="FAILED" ? {completed_at:new Date().toISOString()} : {})
+    }),
+    headers:{"Prefer":"return=minimal"}
+  }).catch(()=>{});
 }
 
 async function runAction(origin:string, action:string, opportunityId:string) {
@@ -82,6 +101,7 @@ export async function POST(req: Request) {
     const opportunityId = String(actionObject?.opportunityId || "");
 
     if (actionObject?.status === "WAITING") {
+      await updateActiveRun("Agent paused: owner approval is required before the next consequential step.","PENDING");
       return NextResponse.json({
         ok:true,
         worker:"agent-heartbeat",
@@ -92,10 +112,17 @@ export async function POST(req: Request) {
     }
 
     if (action && opportunityId && actionObject?.status === "READY") {
+      await updateActiveRun("Agent is working: " + action + (opportunityId && opportunityId!=="system" ? " · " + opportunityId : ""),"RUNNING");
       const executed = await runAction(origin, action, opportunityId);
       if (executed) {
+        const ok = executed.response.ok && executed.result?.ok !== false;
+        if (!ok) {
+          await updateActiveRun("Agent step failed: " + String(executed.result?.error || "Safe agent step failed."),"FAILED");
+        } else {
+          await updateActiveRun("Agent completed: " + action + ". Continuing on the next worker heartbeat…","RUNNING");
+        }
         return NextResponse.json({
-          ok:executed.response.ok && executed.result?.ok !== false,
+          ok,
           worker:"agent-heartbeat",
           action,
           opportunityId,
@@ -105,6 +132,7 @@ export async function POST(req: Request) {
       }
     }
 
+    await updateActiveRun("Agent reached a stable state: " + (action || "No safe action currently ready") + ".","COMPLETE");
     return NextResponse.json({
       ok:true,
       worker:"agent-heartbeat",
@@ -113,10 +141,12 @@ export async function POST(req: Request) {
       message:"No autonomous safe action was ready for this heartbeat."
     });
   } catch (error) {
+    const message = error instanceof Error ? error.message : "Agent heartbeat failed.";
+    await updateActiveRun("Agent worker failed: " + message,"FAILED");
     return NextResponse.json({
       ok:false,
       worker:"agent-heartbeat",
-      error:error instanceof Error ? error.message : "Agent heartbeat failed."
+      error:message
     }, { status:500 });
   }
 }
