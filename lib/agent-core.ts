@@ -39,34 +39,20 @@ export function getNextAction(input: {
 
   const verificationEntries = Object.entries(input.verification);
 
-  // Once an opportunity is fully verified, work its ready follow-up task
-  // before starting verification on another candidate.
-  const fullyVerifiedIds = new Set(
-    verificationEntries
-      .filter(([, dimensions]) =>
-        ["demand", "access", "margin", "repeatability", "risk"].every(
-          (key) => dimensions[key] === "CHECKED" || dimensions[key] === "STRONG"
-        )
-      )
-      .map(([opportunityId]) => opportunityId)
+  // Do not monetize the first candidate that reaches 100%. Finish the
+  // verification set first so the central brain can compare all candidates.
+  const hasUnverifiedCandidates = verificationEntries.some(([, dimensions]) =>
+    ["demand", "access", "margin", "repeatability", "risk"].some(
+      (key) => dimensions[key] !== "CHECKED" && dimensions[key] !== "STRONG"
+    )
   );
 
-  const verifiedFollowUp = input.tasks.find(
-    (t) =>
-      t.status === "READY" &&
-      fullyVerifiedIds.has(t.opportunity_id) &&
-      (/^Build monetization plan/i.test(t.title) || /^Prepare outreach pack/i.test(t.title))
-  );
-
-  if (verifiedFollowUp) {
-    const consequential = /^Prepare outreach pack/i.test(verifiedFollowUp.title);
+  if (!hasUnverifiedCandidates && verificationEntries.length > 0) {
     return {
-      opportunityId: verifiedFollowUp.opportunity_id,
-      action: verifiedFollowUp.title,
-      reason: consequential
-        ? "Verification is complete, and the next outreach step is consequential and requires owner approval."
-        : "Verification is complete, so the agent can move to the opportunity's monetization plan before validating another candidate.",
-      permission: consequential ? "OWNER_APPROVAL_REQUIRED" : "READ_ONLY",
+      opportunityId: "system",
+      action: "Select verified opportunity for monetization",
+      reason: "All currently known opportunities are fully verified; compare the evidence and select one before monetization.",
+      permission: "READ_ONLY",
       status: "READY",
     };
   }
