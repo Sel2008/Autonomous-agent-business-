@@ -57,74 +57,57 @@ export async function POST(req: Request) {
     if (ownerCookie) internalHeaders["cookie"] = ownerCookie;
     if (oidcToken) internalHeaders["x-vercel-trusted-oidc-idp-token"] = oidcToken;
 
-    // Continue existing agent work before starting a fresh research run.
-    // Otherwise every Run click would create new UNVERIFIED opportunities and
-    // keep the global next action at "Verify demand" instead of progressing.
-    let next=await fetch(`${origin}/api/agent/next-action`,{headers:internalHeaders,cache:"no-store"});
+    // A single Run advances safe internal agent work through multiple steps.
+    // It stops at an owner-approval boundary or after the safety cap.
+    let next=await fetch(`\${origin}/api/agent/next-action`,{headers:internalHeaders,cache:"no-store"});
     let nextResult=await next.json().catch(() => ({}));
-    let followUp=await executeSafeFollowUp(origin,internalHeaders,nextResult?.action);
-
-    if(followUp && (!followUp.response.ok || followUp.result?.ok===false)){
-      return NextResponse.json({
-        ok:false,stage:"AGENT_FOLLOW_UP",
-        error:readableError(followUp.result?.error,"The agent's next safe action failed."),
-        run:{ goal,marketScope,stage:"AGENT_STEP_FAILED",researchRunId:null,opportunitiesCreated:0 },
-        action:nextResult?.action||null
-      },{status:followUp.response.status||502});
-    }
-
     let result:any = {};
-    if (!followUp) {
-      const discovery = await fetch(`${origin}/api/discovery`, {
-        method: "POST",
-        headers: internalHeaders,
-        body: JSON.stringify({ goal, marketScope }),
-        cache: "no-store",
-      });
-      result = await discovery.json().catch(() => ({}));
-      if (!discovery.ok || !result.ok) {
-        return NextResponse.json({
-          ok:false, stage:"RESEARCH",
-          error:readableError(result?.error,"The agent could not complete its research stage.")
-        },{status:discovery.status||502});
+    let autonomousSteps=0;
+    let lastFollowUp:any=null;
+
+    while (autonomousSteps < 30) {
+      const action=nextResult?.action;
+      if (!action || action.status !== "READY") break;
+      const actionName=String(action.action||"");
+      if (action.permission === "OWNER_APPROVAL_REQUIRED" || actionName === "Wait for owner approval" || /^Send approved outreach/i.test(actionName)) break;
+      if (actionName === "Select verified opportunity for monetization") {
+        const refreshed=await fetch(`\${origin}/api/agent/next-action`,{headers:internalHeaders,cache:"no-store"});
+        nextResult=await refreshed.json().catch(()=>nextResult);
+        continue;
       }
-
-      next=await fetch(`${origin}/api/agent/next-action`,{headers:internalHeaders,cache:"no-store"});
-      nextResult=await next.json().catch(() => ({}));
-      followUp=await executeSafeFollowUp(origin,internalHeaders,nextResult?.action);
-
-      if(followUp && (!followUp.response.ok || followUp.result?.ok===false)){
-        return NextResponse.json({
-          ok:false,stage:"AGENT_FOLLOW_UP",
-          error:readableError(followUp.result?.error,"The agent completed research but its next safe action failed."),
-          run:{
-            goal,marketScope,stage:"RESEARCH_COMPLETE",
-            researchRunId:result.runId||null,
-            opportunitiesCreated:Array.isArray(result.promotedOpportunities)?result.promotedOpportunities.length:0
-          },
-          action:nextResult?.action||null
-        },{status:followUp.response.status||502});
+      const followUp=await executeSafeFollowUp(origin,internalHeaders,action);
+      if (!followUp) break;
+      lastFollowUp=followUp; autonomousSteps += 1;
+      if (!followUp.response.ok || followUp.result?.ok===false) {
+        return NextResponse.json({ok:false,stage:"AGENT_FOLLOW_UP",error:readableError(followUp.result?.error,"Safe agent step failed."),run:{goal,marketScope,stage:"AGENT_STEP_FAILED",researchRunId:result.runId||null,opportunitiesCreated:Array.isArray(result.promotedOpportunities)?result.promotedOpportunities.length:0,autonomousSteps},action:nextResult?.action||null},{status:followUp.response.status||502});
       }
-    }
-
-    if(followUp){
-      const refreshed=await fetch(`${origin}/api/agent/next-action`,{headers:internalHeaders,cache:"no-store"});
+      const refreshed=await fetch(`\${origin}/api/agent/next-action`,{headers:internalHeaders,cache:"no-store"});
       nextResult=await refreshed.json().catch(()=>nextResult);
     }
 
-    return NextResponse.json({
-      ok:true,
-      run:{
-        goal,marketScope,
-        stage:followUp?"AGENT_STEP_COMPLETE":"RESEARCH_COMPLETE",
-        researchRunId:result.runId||null,
-        opportunitiesCreated:Array.isArray(result.promotedOpportunities)?result.promotedOpportunities.length:0
-      },
-      action:nextResult?.action||null,
-      actionStatus:nextResult?.action?.status||null,
-      brain:nextResult?.brain||"DETERMINISTIC"
-    });
-  } catch(error) {
+    if (autonomousSteps === 0 && !lastFollowUp && nextResult?.action?.action === "Review ledger for new work") {
+      const discovery=await fetch(`\${origin}/api/discovery`,{method:"POST",headers:internalHeaders,body:JSON.stringify({goal,marketScope}),cache:"no-store"});
+      result=await discovery.json().catch(()=>({}));
+      if(!discovery.ok || !result.ok) return NextResponse.json({ok:false,stage:"RESEARCH",error:readableError(result?.error,"Research stage failed.")},{status:discovery.status||502});
+      let refreshed=await fetch(`\${origin}/api/agent/next-action`,{headers:internalHeaders,cache:"no-store"});
+      nextResult=await refreshed.json().catch(()=>({}));
+      while(autonomousSteps < 30) {
+        const action=nextResult?.action;
+        if(!action || action.status!=="READY") break;
+        const actionName=String(action.action||"");
+        if(action.permission==="OWNER_APPROVAL_REQUIRED" || actionName==="Wait for owner approval" || /^Send approved outreach/i.test(actionName)) break;
+        if(actionName==="Select verified opportunity for monetization"){
+          refreshed=await fetch(`\${origin}/api/agent/next-action`,{headers:internalHeaders,cache:"no-store"});
+          nextResult=await refreshed.json().catch(()=>nextResult); continue;
+        }
+        const followUp=await executeSafeFollowUp(origin,internalHeaders,action);
+        if(!followUp) break;
+        lastFollowUp=followUp; autonomousSteps += 1;
+        if(!followUp.response.ok || followUp.result?.ok===false) return NextResponse.json({ok:false,stage:"AGENT_FOLLOW_UP",error:readableError(followUp.result?.error,"Safe agent step failed."),run:{goal,marketScope,stage:"AGENT_STEP_FAILED",researchRunId:result.runId||null,opportunitiesCreated:Array.isArray(result.promotedOpportunities)?result.promotedOpportunities.length:0,autonomousSteps},action:nextResult?.action||null},{status:followUp.response.status||502});
+        refreshed=await fetch(`\${origin}/api/agent/next-action`,{headers:internalHeaders,cache:"no-store"});
+        nextResult=await refreshed.json().catch(()=>nextResult);
+      }
+    }
     return NextResponse.json({ok:false,error:readableError(error,"Agent run failed")},{status:500});
   }
 }
