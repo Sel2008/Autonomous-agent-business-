@@ -1,4 +1,4 @@
-import { NextResponse, after } from "next/server";
+import { NextResponse } from "next/server";
 import { getVercelOidcToken } from "@vercel/oidc";
 import { supabaseConfigured, supabaseRequest } from "../../../../lib/supabase";
 
@@ -160,10 +160,8 @@ export async function POST(req: Request) {
     const runId=created?.[0]?.id;
     if(!runId) throw new Error("Agent run could not be recorded.");
 
-    // The browser receives the run id immediately. The agent work belongs to the
-    // server invocation, not to the Research page that started it.
-    after(()=>processAgentRun(origin,internalHeaders,runId,goal,marketScope));
-
+    // The run is durable in Supabase. A scheduled worker performs research and
+    // each subsequent safe step, so closing the browser does not stop the agent.
     return NextResponse.json({
       ok:true,
       run:{
