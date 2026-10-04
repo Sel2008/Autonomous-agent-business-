@@ -9,6 +9,24 @@ function authorized(req: Request) {
   return req.headers.get("authorization") === `Bearer ${secret}`;
 }
 
+function internalWorkerHeaders() {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) throw new Error("CRON_SECRET is not configured for the agent worker.");
+  return {
+    "Content-Type":"application/json",
+    "x-agent-worker-secret":secret
+  };
+}
+
+function readableError(value: unknown, fallback: string) {
+  if (typeof value === "string" && value.trim()) return value;
+  if (value instanceof Error && value.message) return value.message;
+  if (value && typeof value === "object") {
+    try { return JSON.stringify(value); } catch { return fallback; }
+  }
+  return fallback;
+}
+
 async function updateActiveRun(summary:string, status?:string) {
   if (!supabaseConfigured()) return;
   const rows = await supabaseRequest(
@@ -40,7 +58,7 @@ async function runAction(origin:string, action:string, opportunityId:string) {
     const dimension = action.replace(/^Verify /,"").toLowerCase() as Dimension;
     const response = await fetch(`${origin}/api/agent/validate`, {
       method:"POST",
-      headers:{"Content-Type":"application/json"},
+      headers:internalWorkerHeaders(),
       body:JSON.stringify({opportunityId,dimension}),
       cache:"no-store"
     });
@@ -51,7 +69,7 @@ async function runAction(origin:string, action:string, opportunityId:string) {
   if (action === "Build monetization plan") {
     const response = await fetch(`${origin}/api/agent/monetize`, {
       method:"POST",
-      headers:{"Content-Type":"application/json"},
+      headers:internalWorkerHeaders(),
       body:JSON.stringify({opportunityId}),
       cache:"no-store"
     });
@@ -62,7 +80,7 @@ async function runAction(origin:string, action:string, opportunityId:string) {
   if (action === "Prepare outreach pack") {
     const response = await fetch(`${origin}/api/agent/outreach`, {
       method:"POST",
-      headers:{"Content-Type":"application/json"},
+      headers:internalWorkerHeaders(),
       body:JSON.stringify({opportunityId}),
       cache:"no-store"
     });
@@ -73,7 +91,7 @@ async function runAction(origin:string, action:string, opportunityId:string) {
   if (action === "Send approved outreach") {
     const response = await fetch(`${origin}/api/agent/send-outreach`, {
       method:"POST",
-      headers:{"Content-Type":"application/json"},
+      headers:internalWorkerHeaders(),
       body:JSON.stringify({opportunityId}),
       cache:"no-store"
     });
@@ -84,7 +102,7 @@ async function runAction(origin:string, action:string, opportunityId:string) {
   if (action === "Learn from business result") {
     const response = await fetch(`${origin}/api/agent/learn`, {
       method:"POST",
-      headers:{"Content-Type":"application/json"},
+      headers:internalWorkerHeaders(),
       body:JSON.stringify({opportunityId}),
       cache:"no-store"
     });
@@ -110,7 +128,7 @@ export async function POST(req: Request) {
       await updateActiveRun("Agent started. Researching the mission…","RUNNING");
       const discovery = await fetch(origin + "/api/discovery", {
         method:"POST",
-        headers:{"Content-Type":"application/json"},
+        headers:internalWorkerHeaders(),
         body:JSON.stringify({
           goal:String(activeRun.goal || ""),
           marketScope:String(activeRun.market_scope || "Global"),
@@ -120,7 +138,7 @@ export async function POST(req: Request) {
       });
       const result:any = await discovery.json().catch(()=>({}));
       if (!discovery.ok || !result.ok) {
-        const error = String(result?.error || "The agent could not complete research.");
+        const error = readableError(result?.error, "The agent could not complete research.");
         await updateActiveRun("Research failed: " + error,"FAILED");
         return NextResponse.json({ok:false,worker:"agent-heartbeat",stage:"RESEARCH",error},{status:discovery.status || 502});
       }
@@ -137,7 +155,10 @@ export async function POST(req: Request) {
       });
     }
 
-    const nextResponse = await fetch(origin + "/api/agent/next-action", { cache:"no-store" });
+    const nextResponse = await fetch(origin + "/api/agent/next-action", {
+      headers:internalWorkerHeaders(),
+      cache:"no-store"
+    });
     const next = await nextResponse.json().catch(()=>({}));
     const actionObject = next?.action || {};
     const action = String(actionObject?.action || "");
@@ -160,7 +181,7 @@ export async function POST(req: Request) {
       if (executed) {
         const ok = executed.response.ok && executed.result?.ok !== false;
         if (!ok) {
-          await updateActiveRun("Agent step failed: " + String(executed.result?.error || "Safe agent step failed."),"FAILED");
+          await updateActiveRun("Agent step failed: " + readableError(executed.result?.error, "Safe agent step failed."),"FAILED");
         } else {
           await updateActiveRun("Agent completed: " + action + ". Continuing on the next worker heartbeat…","RUNNING");
         }
