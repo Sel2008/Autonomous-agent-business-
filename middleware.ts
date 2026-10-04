@@ -25,12 +25,18 @@ export async function middleware(request: NextRequest) {
   if (pathname === "/login" || pathname.startsWith("/api/auth")) return NextResponse.next();
 
   // The durable agent worker is called by GitHub Actions, not by a browser
-  // session. Let it through only when the CRON_SECRET bearer token matches.
-  if (
-    pathname === "/api/agent/worker" &&
-    process.env.CRON_SECRET &&
-    request.headers.get("authorization") === `Bearer ${process.env.CRON_SECRET}`
-  ) {
+  // session. The heartbeat enters through /api/agent/worker using Authorization.
+  // The worker then calls only its protected internal agent routes using the
+  // dedicated x-agent-worker-secret header. Never expose this header to browsers.
+  const cronSecret = process.env.CRON_SECRET;
+  const isHeartbeat = pathname === "/api/agent/worker" &&
+    cronSecret &&
+    request.headers.get("authorization") === `Bearer ${cronSecret}`;
+  const isInternalWorkerCall = pathname !== "/api/agent/worker" &&
+    cronSecret &&
+    request.headers.get("x-agent-worker-secret") === cronSecret;
+
+  if (isHeartbeat || isInternalWorkerCall) {
     return NextResponse.next();
   }
   if (pathname.startsWith("/_next/") || pathname === "/favicon.ico") return NextResponse.next();
