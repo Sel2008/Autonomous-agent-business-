@@ -48,6 +48,26 @@ export async function POST(req: Request) {
       text:String(r?.text||r?.snippet||r?.summary||"").replace(/\s+/g," ").slice(0,1200)
     })).filter((r:any)=>/^https?:\/\//.test(r.url));
 
+    const schema={
+      type:"object",additionalProperties:false,
+      properties:{
+        leads:{type:"array",items:{type:"object",additionalProperties:false,properties:{
+          businessName:{type:"string"},website:{type:"string"},fitReason:{type:"string"},personalizedMessage:{type:"string"},offerAngle:{type:"string"}
+        },required:["businessName","website","fitReason","personalizedMessage","offerAngle"]}}
+      },
+      required:["leads"]
+    };
+    const prompt=[
+      "Create a small first-outreach pack for the validated business opportunity.",
+      "Use only the public research supplied below. Do not invent a business fact.",
+      "Choose up to 5 plausible businesses. Do not include private contact details.",
+      "Write concise, respectful, non-spammy personalized drafts. They are drafts only and must not be sent automatically.",
+      "Mention the concrete service outcome and a low-friction first paid test without claiming guaranteed results.",
+      "OPPORTUNITY:",JSON.stringify(opportunity),
+      "MONETIZATION PLAN:",String(plan?.notes||""),
+      "PUBLIC RESEARCH:",JSON.stringify(research)
+    ].join("\n");
+
     const ai=await runBusinessAI({prompt,schema});
     if(!ai) return NextResponse.json({
       ok:false,
