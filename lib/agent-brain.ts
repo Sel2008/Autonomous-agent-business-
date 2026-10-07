@@ -1,3 +1,5 @@
+import { runBusinessAI } from "./ai-router";
+
 export type BrainDecision = {
   action: string;
   opportunityId: string;
@@ -26,14 +28,24 @@ export function allowedAction(value: unknown): string | null {
   return (ALLOWED_ACTIONS as readonly string[]).includes(action) ? action : null;
 }
 
+function parseJson(text:string):any|null {
+  try { return JSON.parse(text); } catch {}
+  const fenced=text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if(fenced) { try { return JSON.parse(fenced[1]); } catch {} }
+  return null;
+}
+
+const selectionSchema = {
+  type:"object", additionalProperties:false,
+  properties:{ opportunityId:{type:"string"}, reason:{type:"string"} },
+  required:["opportunityId","reason"]
+};
+
 export async function askOpportunitySelection(input: {
   opportunities: any[];
   verification: Record<string, Record<string, string>>;
   evidence: any[];
 }): Promise<{ opportunityId: string; reason: string } | null> {
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) return null;
-
   const candidates = input.opportunities
     .filter((op:any) => input.verification[String(op?.id || "")])
     .map((op:any) => ({
@@ -41,18 +53,9 @@ export async function askOpportunitySelection(input: {
       verification: input.verification[String(op.id)],
       evidence: input.evidence.filter((e:any) => String(e?.opportunity_id || "") === String(op.id))
     }));
+  if(!candidates.length) return null;
 
-  const schema = {
-    type: "object",
-    additionalProperties: false,
-    properties: {
-      opportunityId: { type: "string" },
-      reason: { type: "string" }
-    },
-    required: ["opportunityId","reason"]
-  };
-
-  const prompt = [
+  const prompt=[
     "You are the selection brain of an autonomous business agent.",
     "All supplied candidates have completed every required verification dimension.",
     "Choose exactly ONE candidate for the first monetization test.",
@@ -60,49 +63,28 @@ export async function askOpportunitySelection(input: {
     "Do not invent facts, scores, revenue, customers, or evidence. If evidence is uncertain, say so in the reason but still choose the strongest candidate.",
     "Return only the ID of one supplied candidate and a concise rationale.",
     "",
-    "VERIFIED CANDIDATES:",
-    JSON.stringify(candidates)
+    "VERIFIED CANDIDATES:", JSON.stringify(candidates)
   ].join("\n");
 
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      "Authorization": "Bearer " + key,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: process.env.OPENAI_MODEL || "gpt-5.6-luna",
-      store: false,
-      input: prompt,
-      text: {
-        format: {
-          type: "json_schema",
-          name: "agent_opportunity_selection",
-          strict: true,
-          schema
-        }
-      }
-    }),
-    cache: "no-store"
-  });
-
-  if (!response.ok) return null;
-  const data = await response.json().catch(() => null);
-  const text = String(data?.output_text || "").trim();
-  if (!text) return null;
-
-  try {
-    const parsed = JSON.parse(text);
-    const opportunityId = String(parsed?.opportunityId || "");
-    if (!candidates.some((c:any) => String(c.opportunity?.id || "") === opportunityId)) return null;
-    return {
-      opportunityId,
-      reason: String(parsed?.reason || "Central business brain selected the strongest verified opportunity.")
-    };
-  } catch {
-    return null;
-  }
+  const result=await runBusinessAI({prompt,schema:selectionSchema});
+  if(!result) return null;
+  const parsed=parseJson(result.text);
+  const opportunityId=String(parsed?.opportunityId||"");
+  if(!candidates.some((c:any)=>String(c.opportunity?.id||"")===opportunityId)) return null;
+  return {opportunityId,reason:String(parsed?.reason||"AI selected the strongest verified opportunity.")};
 }
+
+const decisionSchema = {
+  type:"object", additionalProperties:false,
+  properties:{
+    action:{type:"string",enum:ALLOWED_ACTIONS},
+    opportunityId:{type:"string"},
+    reason:{type:"string"},
+    permission:{type:"string",enum:["READ_ONLY","OWNER_APPROVAL_REQUIRED"]},
+    status:{type:"string",enum:["READY","WAITING","IN_PROGRESS"]}
+  },
+  required:["action","opportunityId","reason","permission","status"]
+};
 
 export async function askBusinessBrain(input: {
   mission?: string;
@@ -112,24 +94,7 @@ export async function askBusinessBrain(input: {
   verification: Record<string, Record<string, string>>;
   evidence?: any[];
 }): Promise<BrainDecision | null> {
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) return null;
-
-  const model = process.env.OPENAI_MODEL || "gpt-5.6-luna";
-  const schema = {
-    type: "object",
-    additionalProperties: false,
-    properties: {
-      action: { type: "string", enum: ALLOWED_ACTIONS },
-      opportunityId: { type: "string" },
-      reason: { type: "string" },
-      permission: { type: "string", enum: ["READ_ONLY", "OWNER_APPROVAL_REQUIRED"] },
-      status: { type: "string", enum: ["READY", "WAITING", "IN_PROGRESS"] }
-    },
-    required: ["action","opportunityId","reason","permission","status"]
-  };
-
-  const prompt = [
+  const prompt=[
     "You are the central planning brain of an autonomous business agent.",
     "Choose exactly ONE next action from the supplied allowed actions.",
     "Research and validation are safe read-only work. Building plans and outreach drafts are also safe internal preparation.",
@@ -144,50 +109,20 @@ export async function askBusinessBrain(input: {
     "If an approved outreach task is READY, choose Send approved outreach, but permission must be OWNER_APPROVAL_REQUIRED.",
     "If a business-result learning task is READY, choose Learn from business result.",
     "",
-    "LIVE LEDGER:",
-    JSON.stringify(input)
+    "LIVE LEDGER:", JSON.stringify(input)
   ].join("\n");
 
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      "Authorization": "Bearer " + key,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model,
-      store: false,
-      input: prompt,
-      text: {
-        format: {
-          type: "json_schema",
-          name: "agent_next_action",
-          strict: true,
-          schema
-        }
-      }
-    }),
-    cache: "no-store"
-  });
-
-  if (!response.ok) return null;
-  const data = await response.json().catch(() => null);
-  const text = String(data?.output_text || "").trim();
-  if (!text) return null;
-
-  try {
-    const parsed = JSON.parse(text);
-    const action = allowedAction(parsed?.action);
-    if (!action) return null;
-    return {
-      action,
-      opportunityId: String(parsed?.opportunityId || "system"),
-      reason: String(parsed?.reason || "Central business brain selected the next ledger action."),
-      permission: parsed?.permission === "OWNER_APPROVAL_REQUIRED" ? "OWNER_APPROVAL_REQUIRED" : "READ_ONLY",
-      status: parsed?.status === "WAITING" ? "WAITING" : parsed?.status === "IN_PROGRESS" ? "IN_PROGRESS" : "READY",
-      brain: "AI"
-    };
-  } catch {
-    return null;
-  }
+  const result=await runBusinessAI({prompt,schema:decisionSchema});
+  if(!result) return null;
+  const parsed=parseJson(result.text);
+  const action=allowedAction(parsed?.action);
+  if(!action) return null;
+  return {
+    action,
+    opportunityId:String(parsed?.opportunityId||"system"),
+    reason:String(parsed?.reason||"Central business brain selected the next ledger action."),
+    permission:parsed?.permission==="OWNER_APPROVAL_REQUIRED"?"OWNER_APPROVAL_REQUIRED":"READ_ONLY",
+    status:parsed?.status==="WAITING"?"WAITING":parsed?.status==="IN_PROGRESS"?"IN_PROGRESS":"READY",
+    brain:"AI"
+  };
 }
