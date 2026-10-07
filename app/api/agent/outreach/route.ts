@@ -120,14 +120,19 @@ export async function POST(req: Request) {
       });
     }
 
-    const approvalId="approval-"+sendTaskId;
-    const approvals=await supabaseRequest("approvals?id=eq."+encodeURIComponent(approvalId)+"&select=*");
-    if(!Array.isArray(approvals)||approvals.length===0){
-      await supabaseRequest("approvals",{
+    const approvalTitle="Approve sending outreach: "+String(opportunity.name||"opportunity");
+    // approvals.id is a UUID in Supabase, so let the database generate it.
+    // Use the stable approval title for idempotent lookup instead of manufacturing
+    // a text ID such as "approval-research-...-outreach".
+    const approvals=await supabaseRequest("approvals?title=eq."+encodeURIComponent(approvalTitle)+"&order=created_at.desc&limit=1&select=*");
+    let approvalId=Array.isArray(approvals)&&approvals[0]?.id ? String(approvals[0].id) : "";
+    if(!approvalId){
+      const created=await supabaseRequest("approvals",{
         method:"POST",
-        body:JSON.stringify({id:approvalId,title:"Approve sending outreach: "+String(opportunity.name||"opportunity"),tier:"T2",status:"PENDING"}),
-        headers:{"Prefer":"return=minimal"}
+        body:JSON.stringify({title:approvalTitle,tier:"T2",status:"PENDING"}),
+        headers:{"Prefer":"return=representation"}
       });
+      approvalId=Array.isArray(created)&&created[0]?.id ? String(created[0].id) : "";
     }
 
     return NextResponse.json({ok:true,opportunityId,leads,approvalId,nextTask:sendTaskId});
