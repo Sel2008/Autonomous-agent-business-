@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { runBusinessAI } from "../../../../lib/ai-router";
 import { supabaseConfigured, supabaseRequest } from "../../../../lib/supabase";
 
 function deterministicMonetizationPlan(opportunity:any, state:any) {
@@ -66,7 +67,6 @@ function errorText(value: unknown, fallback: string) {
 export async function POST(req: Request) {
   try {
     if (!supabaseConfigured()) return NextResponse.json({ ok:false, error:"Supabase is not configured." }, { status:503 });
-    const key = process.env.OPENAI_API_KEY;
 
     const body = await req.json().catch(() => ({}));
     const opportunityId = String(body?.opportunityId || "").trim();
@@ -89,56 +89,18 @@ export async function POST(req: Request) {
       return acc;
     }, {demand:"UNVERIFIED",access:"UNVERIFIED",margin:"UNVERIFIED",repeatability:"UNVERIFIED",risk:"UNVERIFIED"});
 
-    const model = process.env.OPENAI_MODEL || "gpt-5.6-luna";
-    const schema = {
-      type:"object", additionalProperties:false,
-      properties:{
-        offer:{type:"string"},
-        idealCustomer:{type:"string"},
-        problemSolved:{type:"string"},
-        deliverable:{type:"string"},
-        pricing:{type:"string"},
-        acquisition:{type:"string"},
-        firstPaidTest:{type:"string"},
-        expectedCosts:{type:"string"},
-        risks:{type:"string"},
-        successMetric:{type:"string"}
-      },
-      required:["offer","idealCustomer","problemSolved","deliverable","pricing","acquisition","firstPaidTest","expectedCosts","risks","successMetric"]
-    };
-
-    const prompt=[
-      "You are the monetization strategist inside an autonomous business agent.",
-      "Turn the validated opportunity below into a realistic zero/low-capital first paid test.",
-      "Do not assume customers exist, do not promise revenue, and do not invent evidence.",
-      "The plan must be simple enough to test quickly. Acquisition can use public business websites/directories, but contacting a business is consequential and must wait for owner approval.",
-      "Return one concrete offer, a narrow ideal customer, deliverable, pricing hypothesis, acquisition method, first paid test, expected costs, risks, and a measurable success condition.",
-      "",
-      "OPPORTUNITY:", JSON.stringify(opportunity),
-      "VERIFICATION:", JSON.stringify(state)
-    ].join("\n");
-
+    const result=await runBusinessAI({prompt,schema});
     let plan:any;
     let planningMode = "AI";
-    if (key) {
-      const response=await fetch("https://api.openai.com/v1/responses",{
-        method:"POST",
-        headers:{"Authorization":"Bearer "+key,"Content-Type":"application/json"},
-        body:JSON.stringify({
-          model, store:false, input:prompt,
-          text:{format:{type:"json_schema",name:"monetization_plan",strict:true,schema}}
-        }),
-        cache:"no-store"
-      });
-      if (response.ok) {
-        const data=await response.json().catch(()=>null);
-        try { plan=JSON.parse(String(data?.output_text||"")); }
-        catch { plan=null; }
-      }
+    let provider = "UNKNOWN";
+    if (result) {
+      try { plan=JSON.parse(result.text); provider=result.provider; }
+      catch { plan=null; }
     }
     if (!plan) {
       plan = deterministicMonetizationPlan(opportunity, state);
       planningMode = "DETERMINISTIC_FALLBACK";
+      provider = "DETERMINISTIC";
     }
 
     const notes=Object.entries(plan).map(([k,v])=>k+": "+String(v)).join("\n");
@@ -148,7 +110,7 @@ export async function POST(req: Request) {
         opportunity_id:opportunityId,
         type:"MONETIZATION_PLAN",
         claim:"Agent-created first paid test plan for "+String(opportunity.name||"opportunity"),
-        source:planningMode==="AI" ? "Central business brain" : "Deterministic monetization planner (AI unavailable)",
+        source:planningMode==="AI" ? "Central business brain ("+provider+")" : "Deterministic monetization planner (AI unavailable)",
         checked_on:new Date().toISOString().slice(0,10),
         quality:"CHECKED",
         notes
@@ -187,7 +149,7 @@ export async function POST(req: Request) {
       });
     }
 
-    return NextResponse.json({ok:true,opportunityId,plan,planningMode,approvalId,nextTask:taskId});
+    return NextResponse.json({ok:true,opportunityId,plan,planningMode,provider,approvalId,nextTask:taskId});
   } catch(error) {
     return NextResponse.json({ok:false,error:errorText(error,"Monetization planning failed.")},{status:500});
   }
