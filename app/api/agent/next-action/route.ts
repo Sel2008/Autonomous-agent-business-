@@ -21,7 +21,7 @@ export async function GET() {
   }
 
   try {
-    const [tasks, approvals, verification, opportunities, evidence] = await Promise.all([
+    const [tasks, approvals, verification, opportunities, evidence, activeRuns] = await Promise.all([
       supabaseRequest("tasks?select=*&order=created_at.asc"),
       supabaseRequest("approvals?select=*&order=created_at.desc"),
       supabaseRequest("opportunity_verification?select=*"),
@@ -59,7 +59,8 @@ export async function GET() {
       tasks: liveTasks,
       approvals: liveApprovals,
       verification: grouped,
-      opportunities: liveOpportunities
+      opportunities: liveOpportunities,
+      activeRunId
     });
 
     if (deterministic.status === "WAITING" || /^Verify /.test(deterministic.action) || deterministic.action === "Select verified opportunity for monetization" || deterministic.action === "Build monetization plan") {
