@@ -1,6 +1,62 @@
 import { NextResponse } from "next/server";
 import { supabaseConfigured, supabaseRequest } from "../../../../lib/supabase";
 
+function deterministicMonetizationPlan(opportunity:any, state:any) {
+  const name = String(opportunity?.name || "the selected opportunity").trim();
+  const evidenceSummary = Object.entries(state || {})
+    .map(([k,v]) => `${k}: ${String(v)}`)
+    .join("; ");
+
+  const lower = name.toLowerCase();
+  let offer = `A small, productized first service for ${name}`;
+  let customer = "A narrow customer segment that already has the stated problem and can make a small purchasing decision.";
+  let problem = `Reduce the customer's most immediate problem related to ${name} without requiring a long contract.`;
+  let deliverable = "One clearly defined starter deliverable with a fixed scope and a short turnaround.";
+  let pricing = "Start with a small fixed-price pilot; validate willingness to pay before increasing scope or price.";
+  let acquisition = "Build a small prospect list from public business websites/directories and prepare personalized outreach for owner approval.";
+  let firstPaidTest = "Offer the fixed-scope pilot to a small number of qualified prospects; do not send or commit to outreach until owner approval is granted.";
+  let expectedCosts = "R0 cash target for the first test: use existing free tools and customer-provided assets where possible. Reassess any unavoidable paid cost before spending.";
+  let risks = "Demand, access, delivery time, pricing and competition remain hypotheses until a real prospect responds or pays. Do not claim revenue before payment.";
+  let successMetric = "At least one qualified prospect agrees to the paid pilot at the proposed price, with delivery effort and margin recorded.";
+
+  if (lower.includes("short-form") || lower.includes("video")) {
+    offer = "A fixed-scope short-form video starter pack for a local SMB: a small batch of edited vertical clips from customer-provided footage.";
+    customer = "Local SMBs that already have phone footage or existing content but need consistent short-form social content.";
+    problem = "Turn existing business footage into usable short-form social content without requiring the business to learn editing.";
+    deliverable = "A small fixed batch of vertical clips with captions/hooks, delivered in a defined turnaround using customer-provided assets.";
+    pricing = "Test one fixed-price starter package first; use a low-friction pilot price and raise it only after validating demand and delivery time.";
+    acquisition = "Find local businesses with active social pages/websites and visible content gaps; prepare a short personalized offer for owner approval.";
+    firstPaidTest = "Secure one paid pilot before building a larger service; use the customer's existing footage so the initial cash requirement stays near zero.";
+  } else if (lower.includes("virtual assistant") || lower.includes("admin")) {
+    offer = "A fixed-scope remote admin starter package covering one repetitive business task.";
+    customer = "Small businesses with a recurring administrative task that can be clearly scoped.";
+    problem = "Remove a defined repetitive admin task without requiring a long-term hire.";
+    deliverable = "One documented admin workflow completed for a fixed scope and turnaround.";
+    pricing = "Test a fixed-price starter task before offering a recurring package.";
+  } else if (lower.includes("bookkeeping")) {
+    offer = "A narrowly scoped bookkeeping cleanup or reporting starter service, subject to appropriate local compliance and qualification requirements.";
+    customer = "Small businesses needing a clearly defined bookkeeping task rather than full-service accounting.";
+    problem = "Resolve one specific bookkeeping backlog or reporting need.";
+    deliverable = "One agreed bookkeeping cleanup/reporting deliverable with documented inputs and outputs.";
+    pricing = "Use a fixed-price pilot tied to the exact scope; do not price regulated work without confirming qualifications and local requirements.";
+    risks = "Qualification, tax/accounting compliance, data privacy and accuracy are material risks; confirm requirements before offering regulated services.";
+  } else if (lower.includes("ai") || lower.includes("automation")) {
+    offer = "A small fixed-scope workflow automation audit/prototype for one repetitive business process.";
+    customer = "Small businesses with a repetitive workflow that can be tested without changing critical systems.";
+    problem = "Reduce manual work in one narrowly defined workflow.";
+    deliverable = "One workflow map plus a small prototype or implementation plan using available tools.";
+    pricing = "Test a fixed-price discovery/prototype before proposing a larger implementation.";
+    risks = "Integration reliability, data privacy, access permissions and unclear ROI are key risks; test on non-critical workflows first.";
+  }
+
+  return {
+    offer, idealCustomer:customer, problemSolved:problem, deliverable, pricing,
+    acquisition, firstPaidTest, expectedCosts, risks, successMetric,
+    planningMode:"DETERMINISTIC_FALLBACK",
+    verificationSnapshot:evidenceSummary
+  };
+}
+
 function errorText(value: unknown, fallback: string) {
   if (value instanceof Error && value.message) return value.message;
   if (typeof value === "string" && value.trim()) return value;
@@ -11,7 +67,6 @@ export async function POST(req: Request) {
   try {
     if (!supabaseConfigured()) return NextResponse.json({ ok:false, error:"Supabase is not configured." }, { status:503 });
     const key = process.env.OPENAI_API_KEY;
-    if (!key) return NextResponse.json({ ok:false, error:"Central AI brain is not configured. Add OPENAI_API_KEY to enable monetization planning." }, { status:503 });
 
     const body = await req.json().catch(() => ({}));
     const opportunityId = String(body?.opportunityId || "").trim();
@@ -63,22 +118,28 @@ export async function POST(req: Request) {
       "VERIFICATION:", JSON.stringify(state)
     ].join("\n");
 
-    const response=await fetch("https://api.openai.com/v1/responses",{
-      method:"POST",
-      headers:{"Authorization":"Bearer "+key,"Content-Type":"application/json"},
-      body:JSON.stringify({
-        model, store:false, input:prompt,
-        text:{format:{type:"json_schema",name:"monetization_plan",strict:true,schema}}
-      }),
-      cache:"no-store"
-    });
-    if(!response.ok) {
-      const raw=await response.text();
-      return NextResponse.json({ok:false,error:"Monetization brain failed: "+raw.slice(0,600)},{status:502});
-    }
-    const data=await response.json().catch(()=>null);
     let plan:any;
-    try { plan=JSON.parse(String(data?.output_text||"")); } catch { throw new Error("Central brain returned an invalid monetization plan."); }
+    let planningMode = "AI";
+    if (key) {
+      const response=await fetch("https://api.openai.com/v1/responses",{
+        method:"POST",
+        headers:{"Authorization":"Bearer "+key,"Content-Type":"application/json"},
+        body:JSON.stringify({
+          model, store:false, input:prompt,
+          text:{format:{type:"json_schema",name:"monetization_plan",strict:true,schema}}
+        }),
+        cache:"no-store"
+      });
+      if (response.ok) {
+        const data=await response.json().catch(()=>null);
+        try { plan=JSON.parse(String(data?.output_text||"")); }
+        catch { plan=null; }
+      }
+    }
+    if (!plan) {
+      plan = deterministicMonetizationPlan(opportunity, state);
+      planningMode = "DETERMINISTIC_FALLBACK";
+    }
 
     const notes=Object.entries(plan).map(([k,v])=>k+": "+String(v)).join("\n");
     await supabaseRequest("evidence",{
@@ -87,7 +148,7 @@ export async function POST(req: Request) {
         opportunity_id:opportunityId,
         type:"MONETIZATION_PLAN",
         claim:"Agent-created first paid test plan for "+String(opportunity.name||"opportunity"),
-        source:"Central business brain",
+        source:planningMode==="AI" ? "Central business brain" : "Deterministic monetization planner (AI unavailable)",
         checked_on:new Date().toISOString().slice(0,10),
         quality:"CHECKED",
         notes
@@ -126,7 +187,7 @@ export async function POST(req: Request) {
       });
     }
 
-    return NextResponse.json({ok:true,opportunityId,plan,approvalId,nextTask:taskId});
+    return NextResponse.json({ok:true,opportunityId,plan,planningMode,approvalId,nextTask:taskId});
   } catch(error) {
     return NextResponse.json({ok:false,error:errorText(error,"Monetization planning failed.")},{status:500});
   }
