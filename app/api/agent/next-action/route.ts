@@ -26,7 +26,8 @@ export async function GET() {
       supabaseRequest("approvals?select=*&order=created_at.desc"),
       supabaseRequest("opportunity_verification?select=*"),
       supabaseRequest("opportunities?select=*&order=created_at.desc"),
-      supabaseRequest("evidence?select=*&order=created_at.desc")
+      supabaseRequest("evidence?select=*&order=created_at.desc"),
+      supabaseRequest("discovery_runs?mode=eq.OWNER_APPROVAL_EXECUTION&order=created_at.desc&limit=1&select=id,status")
     ]);
 
     const liveTasks = Array.isArray(tasks) ? tasks : [];
