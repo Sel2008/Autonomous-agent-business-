@@ -28,17 +28,6 @@ export function getNextAction(input: {
     };
   }
 
-  const inProgress = input.tasks.find((t) => t.status === "IN PROGRESS");
-  if (inProgress) {
-    return {
-      opportunityId: inProgress.opportunity_id,
-      action: inProgress.title,
-      reason: "A task is already in progress, so the agent should continue that workflow before starting another.",
-      permission: "READ_ONLY",
-      status: "IN_PROGRESS",
-    };
-  }
-
   const verificationEntries = Object.entries(input.verification);
   const hasUnverifiedCandidates = verificationEntries.some(([, dimensions]) =>
     ["demand", "access", "margin", "repeatability", "risk"].some(
@@ -46,6 +35,10 @@ export function getNextAction(input: {
     )
   );
 
+  const selected = (input.opportunities || []).find((op) => String(op?.status || "").toUpperCase() === "SELECTED");
+
+  // Verification and selection are hard gates. An old IN PROGRESS monetization
+  // task must never outrank these gates.
   if (hasUnverifiedCandidates) {
     const candidates = verificationEntries
       .map(([opportunityId, dimensions], index) => {
@@ -75,7 +68,6 @@ export function getNextAction(input: {
     }
   }
 
-  const selected = (input.opportunities || []).find((op) => String(op?.status || "").toUpperCase() === "SELECTED");
   if (!hasUnverifiedCandidates && verificationEntries.length > 0) {
     if (!selected) {
       return {
@@ -102,6 +94,17 @@ export function getNextAction(input: {
         : "The verified winner is already selected; continue with its first monetization plan.",
       permission: "READ_ONLY",
       status: "READY",
+    };
+  }
+
+  const inProgress = input.tasks.find((t) => t.status === "IN PROGRESS");
+  if (inProgress) {
+    return {
+      opportunityId: inProgress.opportunity_id,
+      action: inProgress.title,
+      reason: "A task is already in progress, so the agent should continue that workflow before starting another.",
+      permission: "READ_ONLY",
+      status: "IN_PROGRESS",
     };
   }
 
