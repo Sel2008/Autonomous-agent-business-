@@ -16,6 +16,7 @@ export function getNextAction(input: {
   approvals: Approval[];
   verification: Record<string, Verification>;
   opportunities?: Opportunity[];
+  activeRunId?: string;
 }): AgentAction {
   const pendingApproval = input.approvals.find((a) => a.status === "PENDING");
   if (pendingApproval) {
@@ -28,14 +29,25 @@ export function getNextAction(input: {
     };
   }
 
-  const verificationEntries = Object.entries(input.verification);
+  const currentOpportunityIds = new Set(
+    (input.activeRunId
+      ? (input.opportunities || []).filter((op) => String(op?.id || "").startsWith("research-" + input.activeRunId + "-"))
+      : (input.opportunities || [])
+    ).map((op) => String(op.id))
+  );
+  const verificationEntries = Object.entries(input.verification)
+    .filter(([opportunityId]) => currentOpportunityIds.size === 0 || currentOpportunityIds.has(opportunityId));
   const hasUnverifiedCandidates = verificationEntries.some(([, dimensions]) =>
     ["demand", "access", "margin", "repeatability", "risk"].some(
       (key) => dimensions[key] !== "CHECKED" && dimensions[key] !== "STRONG"
     )
   );
 
-  const selected = (input.opportunities || []).find((op) => String(op?.status || "").toUpperCase() === "SELECTED");
+  const selected = (input.opportunities || []).find(
+    (op) =>
+      String(op?.status || "").toUpperCase() === "SELECTED" &&
+      (currentOpportunityIds.size === 0 || currentOpportunityIds.has(String(op.id)))
+  );
 
   // Verification and selection are hard gates. An old IN PROGRESS monetization
   // task must never outrank these gates.
