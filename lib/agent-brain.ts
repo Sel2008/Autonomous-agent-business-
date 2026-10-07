@@ -13,6 +13,7 @@ const ALLOWED_ACTIONS = [
   "Verify margin",
   "Verify repeatability",
   "Verify risk",
+  "Select verified opportunity for monetization",
   "Build monetization plan",
   "Prepare outreach pack",
   "Send approved outreach",
@@ -23,6 +24,84 @@ const ALLOWED_ACTIONS = [
 export function allowedAction(value: unknown): string | null {
   const action = String(value || "").trim();
   return (ALLOWED_ACTIONS as readonly string[]).includes(action) ? action : null;
+}
+
+export async function askOpportunitySelection(input: {
+  opportunities: any[];
+  verification: Record<string, Record<string, string>>;
+  evidence: any[];
+}): Promise<{ opportunityId: string; reason: string } | null> {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) return null;
+
+  const candidates = input.opportunities
+    .filter((op:any) => input.verification[String(op?.id || "")])
+    .map((op:any) => ({
+      opportunity: op,
+      verification: input.verification[String(op.id)],
+      evidence: input.evidence.filter((e:any) => String(e?.opportunity_id || "") === String(op.id))
+    }));
+
+  const schema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      opportunityId: { type: "string" },
+      reason: { type: "string" }
+    },
+    required: ["opportunityId","reason"]
+  };
+
+  const prompt = [
+    "You are the selection brain of an autonomous business agent.",
+    "All supplied candidates have completed every required verification dimension.",
+    "Choose exactly ONE candidate for the first monetization test.",
+    "Compare the complete set. Prefer stronger and more independent evidence, clearer customer demand, credible customer access, better economics/margin, repeatability, and lower documented risk.",
+    "Do not invent facts, scores, revenue, customers, or evidence. If evidence is uncertain, say so in the reason but still choose the strongest candidate.",
+    "Return only the ID of one supplied candidate and a concise rationale.",
+    "",
+    "VERIFIED CANDIDATES:",
+    JSON.stringify(candidates)
+  ].join("\n");
+
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      "Authorization": "Bearer " + key,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: process.env.OPENAI_MODEL || "gpt-5.6-luna",
+      store: false,
+      input: prompt,
+      text: {
+        format: {
+          type: "json_schema",
+          name: "agent_opportunity_selection",
+          strict: true,
+          schema
+        }
+      }
+    }),
+    cache: "no-store"
+  });
+
+  if (!response.ok) return null;
+  const data = await response.json().catch(() => null);
+  const text = String(data?.output_text || "").trim();
+  if (!text) return null;
+
+  try {
+    const parsed = JSON.parse(text);
+    const opportunityId = String(parsed?.opportunityId || "");
+    if (!candidates.some((c:any) => String(c.opportunity?.id || "") === opportunityId)) return null;
+    return {
+      opportunityId,
+      reason: String(parsed?.reason || "Central business brain selected the strongest verified opportunity.")
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function askBusinessBrain(input: {
@@ -58,10 +137,9 @@ export async function askBusinessBrain(input: {
     "Never invent completed work. Use the live ledger state only.",
     "Prefer progressing the highest-value live opportunity rather than looping on already-completed work.",
     "If a pending approval exists, wait for it.",
-    "If any opportunity has UNVERIFIED verification dimensions, continue verifying them before monetization selection.",
-    "Once the live research set is fully verified, compare the verified opportunities using opportunity data and evidence quality and select exactly one for the first monetization test.",
-    "Prefer stronger evidence, clearer demand, credible access, better economics and repeatability, and lower documented risk. Never invent evidence or scores.",
-    "If a monetization-plan task is READY, choose Build monetization plan for the selected opportunity. If no monetization task exists yet but fully verified opportunities exist, still choose Build monetization plan for exactly one selected opportunity.",
+    "Verification is a hard gate: if any opportunity in the live research set has UNVERIFIED verification dimensions, continue verifying before selection.",
+    "Selection is a hard gate before monetization: when all current opportunities are fully verified and no opportunity is SELECTED, the next action must be Select verified opportunity for monetization.",
+    "Only after one opportunity is durably marked SELECTED may Build monetization plan be chosen, and it must target that selected opportunity.",
     "If an outreach-pack task is READY, choose Prepare outreach pack.",
     "If an approved outreach task is READY, choose Send approved outreach, but permission must be OWNER_APPROVAL_REQUIRED.",
     "If a business-result learning task is READY, choose Learn from business result.",
