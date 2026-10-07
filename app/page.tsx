@@ -67,8 +67,9 @@ export default function Home(){
  const businessResults=evidence.filter(e=>e.type==="BUSINESS_RESULT");
  const verifiedRevenue=businessResults.reduce((sum,e)=>{try{const x=JSON.parse(e.notes||"{}");return sum+(Number(x.amount)||0)}catch{return sum}},0);
  const pendingApprovals=approvals.filter(a=>a.status==="PENDING").length;
- const nextTask=useMemo(()=>tasks.find(t=>t.status!=="COMPLETE"),[tasks]);
+ const nextTask=useMemo(()=>tasks.find(t=>t.status!=="COMPLETE" && t.status!=="BLOCKED"),[tasks]);
  const selectedOpportunity=opportunities.find(o=>o.id===selected);
+ const winnerOpportunity=opportunities.find(o=>String(o.status).toUpperCase()==="SELECTED");
 
  async function decideApproval(id:string,status:"APPROVED"|"REJECTED"){
   setApprovals(x=>x.map(a=>a.id===id?{...a,status}:a));
@@ -105,9 +106,9 @@ export default function Home(){
 
   <section className="section card">
    <div className="eyebrow">AGENT ACTIVITY</div><h2>What the agent is doing</h2>
-   <div className="notice"><strong>Live agent status:</strong> {agentRun?.status||"READY"}<br/><strong>{agentRun?.summary||agentAction?.action||"Reading the live ledger…"}</strong><br/><span className="muted">{agentAction?.reason||"The Agent Core is checking the current state."} · Permission: {agentAction?.permission||"READ_ONLY"}</span></div>
+   <div className="notice"><strong>Live agent status:</strong> {agentRun?.status||"READY"}<br/><strong>{winnerOpportunity ? "WINNER SELECTED: " + winnerOpportunity.name : agentAction?.action==="Select verified opportunity for monetization" ? "SELECTING: comparing all fully verified opportunities" : agentRun?.summary||agentAction?.action||"Reading the live ledger…"}</strong><br/><span className="muted">{winnerOpportunity ? (winnerOpportunity.next || "Winner selected; monetization is now the next agent step.") : agentAction?.reason||"The Agent Core is checking the current state."} · Permission: {agentAction?.permission||"READ_ONLY"}</span></div>
    <div className="grid two" style={{marginTop:16}}>
-    <div><div className="muted">Next validation task</div><strong>{nextTask?.title||"No live validation task currently queued."}</strong></div>
+    <div><div className="muted">{winnerOpportunity ? "Selected winner" : "Next agent task"}</div><strong>{winnerOpportunity ? winnerOpportunity.name : nextTask?.title||"No live agent task currently queued."}</strong></div>
     <div><div className="muted">Task history</div><strong>{complete} completed · {tasks.length} live tasks</strong></div>
    </div>
   </section>
@@ -115,7 +116,7 @@ export default function Home(){
   <div className="tabs"><button className={tab==="overview"?"tab active":"tab"} onClick={()=>setTab("overview")}>Operations</button><button className={tab==="evidence"?"tab active":"tab"} onClick={()=>setTab("evidence")}>Evidence</button><button className={tab==="scoring"?"tab active":"tab"} onClick={()=>setTab("scoring")}>Scoring</button></div>
 
   {tab==="overview"&&<>
-   <section className="section"><div className="section-head"><div><div className="eyebrow">LIVE BUSINESS STATE</div><h2>Opportunities researched by the agent</h2></div><a href="/discovery" className="button" style={{textDecoration:"none"}}>Open research workspace</a></div>
+   <section className="section"><div className="section-head"><div><div className="eyebrow">LIVE BUSINESS STATE</div><h2>Opportunities researched by the agent</h2></div><a href="/discovery" className="button" style={{textDecoration:"none"}}>Open research workspace</a></div>{winnerOpportunity&&<div className="notice" style={{marginBottom:16}}><strong>🏆 Agent-selected winner:</strong> {winnerOpportunity.name}<br/><span className="muted">{winnerOpportunity.next}</span></div>}
     {opportunities.length===0?<div className="card"><p className="muted">No live research-generated opportunities yet. Run a research mission, then return here. Bootstrap/demo records are intentionally hidden from this view.</p></div>:<div className="cards">{opportunities.map(o=><button className="opportunity card" key={o.id} onClick={()=>setSelected(o.id)}><div className="op-top"><span className="pill">{o.status}</span><span className="muted">{o.capital}</span></div><h3>{o.name}</h3><p className="muted">{o.why}</p><div className="next">Agent next: {o.next}</div></button>)}</div>}
    </section>
    <section className="section grid two">
