@@ -66,6 +66,17 @@ async function runAction(origin:string, action:string, opportunityId:string) {
     return { response, result, type:"validation", dimension };
   }
 
+  if (action === "Select verified opportunity for monetization") {
+    const response = await fetch(`${origin}/api/agent/select`, {
+      method:"POST",
+      headers:internalWorkerHeaders(),
+      body:JSON.stringify({}),
+      cache:"no-store"
+    });
+    const result = await response.json().catch(()=>({}));
+    return { response, result, type:"selection" };
+  }
+
   if (action === "Build monetization plan") {
     const response = await fetch(`${origin}/api/agent/monetize`, {
       method:"POST",
@@ -122,8 +133,6 @@ export async function POST(req: Request) {
     const origin = new URL(req.url).origin;
     const activeRun = await getActiveRun();
 
-    // A newly created run is durable in Supabase. The heartbeat owns research,
-    // so the run never depends on the browser or Next.js after().
     if (activeRun && activeRun.status === "PENDING" && String(activeRun.summary || "").startsWith("Agent run queued")) {
       await updateActiveRun("Agent started. Researching the mission…","RUNNING");
       const discovery = await fetch(origin + "/api/discovery", {
@@ -175,15 +184,23 @@ export async function POST(req: Request) {
       });
     }
 
-    if (action && opportunityId && actionObject?.status === "READY") {
-      await updateActiveRun("Agent is working: " + action + (opportunityId && opportunityId!=="system" ? " · " + opportunityId : ""),"RUNNING");
+    if (actionObject?.status === "READY" && (action === "Select verified opportunity for monetization" || (action && opportunityId))) {
+      await updateActiveRun(
+        action === "Select verified opportunity for monetization"
+          ? "Agent is selecting one winner from all fully verified opportunities…"
+          : "Agent is working: " + action + (opportunityId && opportunityId!=="system" ? " · " + opportunityId : ""),
+        "RUNNING"
+      );
       const executed = await runAction(origin, action, opportunityId);
       if (executed) {
         const ok = executed.response.ok && executed.result?.ok !== false;
         if (!ok) {
           await updateActiveRun("Agent step failed: " + readableError(executed.result?.error, "Safe agent step failed."),"FAILED");
         } else {
-          await updateActiveRun("Agent completed: " + action + ". Continuing on the next worker heartbeat…","RUNNING");
+          const selectionMessage = executed.type === "selection"
+            ? "Winner selected. The next heartbeat will build the monetization plan."
+            : "Agent completed: " + action + ". Continuing on the next worker heartbeat…";
+          await updateActiveRun(selectionMessage,"RUNNING");
         }
         return NextResponse.json({
           ok,
