@@ -34,6 +34,8 @@ export async function GET() {
     const liveApprovals = Array.isArray(approvals) ? approvals : [];
     const liveOpportunities = Array.isArray(opportunities) ? opportunities : [];
     const liveEvidence = Array.isArray(evidence) ? evidence : [];
+    const activeRun = Array.isArray(activeRuns) ? activeRuns[0] : null;
+    const activeRunId = String(activeRun?.id || "");
 
     const grouped: Record<string, Record<string, string>> = {};
     for (const row of Array.isArray(verification) ? verification : []) {
