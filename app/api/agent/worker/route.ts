@@ -47,12 +47,30 @@ async function updateActiveRun(summary:string, status?:string) {
 
 async function getActiveRun() {
   if (!supabaseConfigured()) return null;
-  const rows = await supabaseRequest(
+
+  const activeRows = await supabaseRequest(
     "discovery_runs?mode=eq.OWNER_APPROVAL_EXECUTION&status=in.(PENDING,RUNNING)&order=created_at.desc&limit=1&select=*"
   ).catch(()=>[]);
-  return Array.isArray(rows) ? (rows[0] || null) : null;
-}
+  if (Array.isArray(activeRows) && activeRows[0]) return activeRows[0];
 
+  // Recover the existing run when it stopped at the known approvals UUID bug.
+  // Research and winner selection are already persisted, so do not start a
+  // second research run; continue from the selected opportunity instead.
+  const failedRows = await supabaseRequest(
+    "discovery_runs?mode=eq.OWNER_APPROVAL_EXECUTION&status=eq.FAILED&order=created_at.desc&limit=1&select=*"
+  ).catch(()=>[]);
+  const failed = Array.isArray(failedRows) ? failedRows[0] : null;
+  const summary = String(failed?.summary || "");
+
+  if (failed?.id && /invalid input syntax for type uuid/i.test(summary)) {
+    const selected = await supabaseRequest(
+      "opportunities?status=eq.SELECTED&select=id&limit=1"
+    ).catch(()=>[]);
+    if (Array.isArray(selected) && selected[0]?.id) return failed;
+  }
+
+  return null;
+}
 async function runAction(origin:string, action:string, opportunityId:string) {
   if (/^Verify (demand|access|margin|repeatability|risk)$/.test(action)) {
     const dimension = action.replace(/^Verify /,"").toLowerCase() as Dimension;
