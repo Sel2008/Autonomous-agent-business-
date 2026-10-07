@@ -7,6 +7,7 @@ export type BrainDecision = {
   permission: "READ_ONLY" | "OWNER_APPROVAL_REQUIRED";
   status: "READY" | "WAITING" | "IN_PROGRESS";
   brain: "AI" | "DETERMINISTIC";
+  provider?: string;
 };
 
 const ALLOWED_ACTIONS = [
@@ -123,6 +124,7 @@ export async function askBusinessBrain(input: {
     reason:String(parsed?.reason||"Central business brain selected the next ledger action."),
     permission:parsed?.permission==="OWNER_APPROVAL_REQUIRED"?"OWNER_APPROVAL_REQUIRED":"READ_ONLY",
     status:parsed?.status==="WAITING"?"WAITING":parsed?.status==="IN_PROGRESS"?"IN_PROGRESS":"READY",
-    brain:"AI"
+    brain:"AI",
+    provider:result.provider
   };
 }
