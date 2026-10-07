@@ -146,19 +146,25 @@ export async function POST(req: Request) {
       });
     }
 
-    const approvalId="approval-"+taskId;
-    const approvals=await supabaseRequest("approvals?id=eq."+encodeURIComponent(approvalId)+"&select=*");
-    if(!Array.isArray(approvals)||approvals.length===0) {
-      await supabaseRequest("approvals",{
+    const approvalTitle="Approve monetization test: "+String(opportunity.name||"opportunity");
+    const existingApprovals=await supabaseRequest("approvals?title=eq."+encodeURIComponent(approvalTitle)+"&select=*");
+    let approvalId=Array.isArray(existingApprovals)&&existingApprovals[0]?.id ? String(existingApprovals[0].id) : "";
+    if(!approvalId) {
+      const createdApproval=await supabaseRequest("approvals",{
         method:"POST",
         body:JSON.stringify({
-          id:approvalId,
-          title:"Approve monetization test: "+String(opportunity.name||"opportunity"),
+          title:approvalTitle,
           tier:"T1",
           status:"PENDING"
         }),
-        headers:{"Prefer":"return=minimal"}
+        headers:{"Prefer":"return=representation"}
       });
+      if(Array.isArray(createdApproval)&&createdApproval[0]?.id) {
+        approvalId=String(createdApproval[0].id);
+      } else {
+        const refreshed=await supabaseRequest("approvals?title=eq."+encodeURIComponent(approvalTitle)+"&select=*");
+        if(Array.isArray(refreshed)&&refreshed[0]?.id) approvalId=String(refreshed[0].id);
+      }
     }
 
     return NextResponse.json({ok:true,opportunityId,plan,planningMode,provider,approvalId,nextTask:taskId});
