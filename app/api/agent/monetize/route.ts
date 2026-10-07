@@ -89,6 +89,18 @@ export async function POST(req: Request) {
       return acc;
     }, {demand:"UNVERIFIED",access:"UNVERIFIED",margin:"UNVERIFIED",repeatability:"UNVERIFIED",risk:"UNVERIFIED"});
 
+    const schema={type:"object",additionalProperties:false,properties:{
+      offer:{type:"string"},idealCustomer:{type:"string"},problemSolved:{type:"string"},deliverable:{type:"string"},
+      pricing:{type:"string"},acquisition:{type:"string"},firstPaidTest:{type:"string"},expectedCosts:{type:"string"},
+      risks:{type:"string"},successMetric:{type:"string"}
+    },required:["offer","idealCustomer","problemSolved","deliverable","pricing","acquisition","firstPaidTest","expectedCosts","risks","successMetric"]};
+    const prompt=[
+      "Create a realistic first paid test from the validated business opportunity.",
+      "Do not invent evidence or promise revenue. Keep the test zero or low cash.",
+      "Return one concrete offer, customer, problem, deliverable, pricing hypothesis, acquisition method, first paid test, costs, risks, and success metric.",
+      "OPPORTUNITY:",JSON.stringify(opportunity),"VERIFICATION:",JSON.stringify(state)
+    ].join("\n");
+
     const result=await runBusinessAI({prompt,schema});
     let plan:any;
     let planningMode = "AI";
