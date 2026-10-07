@@ -58,17 +58,13 @@ export async function GET() {
     const deterministic = getNextAction({
       tasks: liveTasks,
       approvals: liveApprovals,
-      verification: grouped
+      verification: grouped,
+      opportunities: liveOpportunities
     });
 
-    // Safety-critical ordering stays deterministic: pending approvals and
-    // unfinished verification cannot be overridden by the language model.
-    if (deterministic.status === "WAITING" || /^Verify /.test(deterministic.action)) {
+    if (deterministic.status === "WAITING" || /^Verify /.test(deterministic.action) || deterministic.action === "Select verified opportunity for monetization" || deterministic.action === "Build monetization plan") {
       return NextResponse.json({ configured:true, brain:"DETERMINISTIC", action:deterministic });
     }
-    // "Select verified opportunity..." is a planning signal. Let the AI brain
-    // compare the complete verified set and return the actual monetization action.
-
 
     const ai = await askBusinessBrain(state);
     if (ai) {
@@ -85,9 +81,14 @@ export async function GET() {
           )
           .map(([id]) => id)
       );
+      const selected = liveOpportunities.find((o:any)=>String(o?.status||"").toUpperCase()==="SELECTED");
+      const selectedId = String(selected?.id || "");
       const validForLedger =
         (ai.action === "Build monetization plan" &&
-          (readyTitles.some(t=>t.includes("build monetization plan")) || fullyVerifiedIds.has(String(ai.opportunityId)))) ||
+          selectedId &&
+          selectedId === String(ai.opportunityId) &&
+          fullyVerifiedIds.has(selectedId) &&
+          (readyTitles.some(t=>t.includes("build monetization plan")) || fullyVerifiedIds.has(selectedId))) ||
         (ai.action === "Prepare outreach pack" && readyTitles.some(t=>t.includes("prepare outreach pack"))) ||
         (ai.action === "Send approved outreach" && readyTitles.some(t=>t.includes("send approved outreach")) &&
           liveApprovals.some((a:any)=>a?.status==="APPROVED" && String(a?.title||"").toLowerCase().includes("approve sending outreach"))) ||
@@ -98,7 +99,7 @@ export async function GET() {
         const matchingTask = liveTasks.find((t:any)=>{
           const title=String(t?.title||"").toLowerCase();
           if(String(t?.status||"")!=="READY") return false;
-          if(ai.action==="Build monetization plan") return title.includes("build monetization plan");
+          if(ai.action==="Build monetization plan") return String(t?.opportunity_id||"")===selectedId && title.includes("build monetization plan");
           if(ai.action==="Prepare outreach pack") return title.includes("prepare outreach pack");
           if(ai.action==="Send approved outreach") return title.includes("send approved outreach");
           if(ai.action==="Learn from business result") return title.includes("learn from business result");
