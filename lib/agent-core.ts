@@ -9,11 +9,13 @@ export type AgentAction = {
 type Task = { id: string; opportunity_id: string; title: string; status: string };
 type Approval = { status: string; title?: string; reason?: string };
 type Verification = Record<string, string>;
+type Opportunity = { id: string; status?: string };
 
 export function getNextAction(input: {
   tasks: Task[];
   approvals: Approval[];
   verification: Record<string, Verification>;
+  opportunities?: Opportunity[];
 }): AgentAction {
   const pendingApproval = input.approvals.find((a) => a.status === "PENDING");
   if (pendingApproval) {
@@ -38,51 +40,66 @@ export function getNextAction(input: {
   }
 
   const verificationEntries = Object.entries(input.verification);
-
-  // Do not monetize the first candidate that reaches 100%. Finish the
-  // verification set first so the central brain can compare all candidates.
   const hasUnverifiedCandidates = verificationEntries.some(([, dimensions]) =>
     ["demand", "access", "margin", "repeatability", "risk"].some(
       (key) => dimensions[key] !== "CHECKED" && dimensions[key] !== "STRONG"
     )
   );
 
-  if (!hasUnverifiedCandidates && verificationEntries.length > 0) {
-    return {
-      opportunityId: "system",
-      action: "Select verified opportunity for monetization",
-      reason: "All currently known opportunities are fully verified; compare the evidence and select one before monetization.",
-      permission: "READ_ONLY",
-      status: "READY",
-    };
+  if (hasUnverifiedCandidates) {
+    const candidates = verificationEntries
+      .map(([opportunityId, dimensions], index) => {
+        const dimensionsList = Object.entries(dimensions);
+        const nextDimension = dimensionsList.find(([, value]) => value === "UNVERIFIED");
+        const checkedCount = dimensionsList.filter(
+          ([, value]) => value === "CHECKED" || value === "STRONG"
+        ).length;
+        return { opportunityId, nextDimension, checkedCount, index };
+      })
+      .filter((x) => Boolean(x.nextDimension))
+      .sort((a, b) => b.checkedCount - a.checkedCount || a.index - b.index);
+
+    const verificationTarget = candidates[0];
+    if (verificationTarget?.nextDimension) {
+      const [dimension] = verificationTarget.nextDimension;
+      return {
+        opportunityId: verificationTarget.opportunityId,
+        action: `Verify ${dimension}`,
+        reason:
+          verificationTarget.checkedCount > 0
+            ? "Continue verification on the opportunity already being validated before starting a new candidate."
+            : "The opportunity still has an unverified verification dimension.",
+        permission: "READ_ONLY",
+        status: "READY",
+      };
+    }
   }
 
-  // Finish verification for the opportunity already being worked on before
-  // jumping to a new candidate. This makes repeated runs progress through the
-  // dimensions for one opportunity instead of repeatedly starting at demand
-  // on different opportunities.
-  const candidates = verificationEntries
-    .map(([opportunityId, dimensions], index) => {
-      const dimensionsList = Object.entries(dimensions);
-      const nextDimension = dimensionsList.find(([, value]) => value === "UNVERIFIED");
-      const checkedCount = dimensionsList.filter(
-        ([, value]) => value === "CHECKED" || value === "STRONG"
-      ).length;
-      return { opportunityId, nextDimension, checkedCount, index };
-    })
-    .filter((x) => Boolean(x.nextDimension))
-    .sort((a, b) => b.checkedCount - a.checkedCount || a.index - b.index);
+  const selected = (input.opportunities || []).find((op) => String(op?.status || "").toUpperCase() === "SELECTED");
+  if (!hasUnverifiedCandidates && verificationEntries.length > 0) {
+    if (!selected) {
+      return {
+        opportunityId: "system",
+        action: "Select verified opportunity for monetization",
+        reason: "All currently known opportunities are fully verified; the agent must now compare them and persist exactly one winner before monetization.",
+        permission: "READ_ONLY",
+        status: "READY",
+      };
+    }
 
-  const verificationTarget = candidates[0];
-  if (verificationTarget?.nextDimension) {
-    const [dimension] = verificationTarget.nextDimension;
+    const selectedId = String(selected.id);
+    const selectedPlanTask = input.tasks.find(
+      (t) =>
+        t.status === "READY" &&
+        t.opportunity_id === selectedId &&
+        t.title.toLowerCase().includes("build monetization plan")
+    );
     return {
-      opportunityId: verificationTarget.opportunityId,
-      action: `Verify ${dimension}`,
-      reason:
-        verificationTarget.checkedCount > 0
-          ? "Continue verification on the opportunity already being validated before starting a new candidate."
-          : "The opportunity still has an unverified verification dimension.",
+      opportunityId: selectedId,
+      action: "Build monetization plan",
+      reason: selectedPlanTask
+        ? "The verified winner is selected and its monetization plan is ready to be built."
+        : "The verified winner is already selected; continue with its first monetization plan.",
       permission: "READ_ONLY",
       status: "READY",
     };
