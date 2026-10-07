@@ -9,9 +9,14 @@ export async function POST(req: Request) {
     if(!opportunityId) return NextResponse.json({ok:false,error:"opportunityId is required."},{status:400});
 
     const sendTaskId="research-"+opportunityId.replace(/[^a-zA-Z0-9_-]/g,"-")+"-send";
-    const approvalId="approval-"+sendTaskId;
-    const approvals=await supabaseRequest("approvals?id=eq."+encodeURIComponent(approvalId)+"&select=*");
+    const opportunities=await supabaseRequest("opportunities?id=eq."+encodeURIComponent(opportunityId)+"&select=name");
+    const opportunityName=Array.isArray(opportunities)&&opportunities[0]?.name
+      ? String(opportunities[0].name)
+      : "opportunity";
+    const approvalTitle="Approve sending outreach: "+opportunityName;
+    const approvals=await supabaseRequest("approvals?title=eq."+encodeURIComponent(approvalTitle)+"&order=created_at.desc&limit=1&select=*");
     const approved=Array.isArray(approvals)?approvals.find((a:any)=>a?.status==="APPROVED"):null;
+    const approvalId=approved?.id ? String(approved.id) : "";
     if(!approved) return NextResponse.json({ok:false,error:"Owner approval is required before outreach can be sent."},{status:403});
 
     const webhook=process.env.OUTREACH_WEBHOOK_URL;
