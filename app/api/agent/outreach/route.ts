@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseConfigured, supabaseRequest } from "../../../../lib/supabase";
+import { runBusinessAI } from "../../../../lib/ai-router";
 
 function errorText(value: unknown, fallback: string) {
   if (value instanceof Error && value.message) return value.message;
@@ -11,9 +12,7 @@ export async function POST(req: Request) {
   try {
     if (!supabaseConfigured()) return NextResponse.json({ok:false,error:"Supabase is not configured."},{status:503});
     const exaKey=process.env.EXA_API_KEY;
-    const openaiKey=process.env.OPENAI_API_KEY;
     if(!exaKey) return NextResponse.json({ok:false,error:"EXA_API_KEY is required for lead research."},{status:503});
-    if(!openaiKey) return NextResponse.json({ok:false,error:"OPENAI_API_KEY is required for outreach drafting."},{status:503});
 
     const body=await req.json().catch(()=>({}));
     const opportunityId=String(body?.opportunityId||"").trim();
@@ -49,37 +48,13 @@ export async function POST(req: Request) {
       text:String(r?.text||r?.snippet||r?.summary||"").replace(/\s+/g," ").slice(0,1200)
     })).filter((r:any)=>/^https?:\/\//.test(r.url));
 
-    const model=process.env.OPENAI_MODEL||"gpt-5.6-luna";
-    const schema={
-      type:"object",additionalProperties:false,
-      properties:{
-        leads:{type:"array",items:{type:"object",additionalProperties:false,properties:{
-          businessName:{type:"string"},website:{type:"string"},fitReason:{type:"string"},personalizedMessage:{type:"string"},offerAngle:{type:"string"}
-        },required:["businessName","website","fitReason","personalizedMessage","offerAngle"]}}
-      },
-      required:["leads"]
-    };
-    const prompt=[
-      "Create a small first-outreach pack for the validated business opportunity.",
-      "Use only the public research supplied below. Do not invent a business fact.",
-      "Choose up to 5 plausible businesses. Do not include private contact details.",
-      "Write concise, respectful, non-spammy personalized drafts. They are drafts only and must not be sent automatically.",
-      "Mention the concrete service outcome and a low-friction first paid test without claiming guaranteed results.",
-      "OPPORTUNITY:",JSON.stringify(opportunity),
-      "MONETIZATION PLAN:",String(plan?.notes||""),
-      "PUBLIC RESEARCH:",JSON.stringify(research)
-    ].join("\n");
-
-    const ai=await fetch("https://api.openai.com/v1/responses",{
-      method:"POST",
-      headers:{"Authorization":"Bearer "+openaiKey,"Content-Type":"application/json"},
-      body:JSON.stringify({model,store:false,input:prompt,text:{format:{type:"json_schema",name:"outreach_pack",strict:true,schema}}}),
-      cache:"no-store"
-    });
-    if(!ai.ok) return NextResponse.json({ok:false,error:"Outreach drafting failed: "+(await ai.text()).slice(0,600)},{status:502});
-    const aiData=await ai.json().catch(()=>null);
+    const ai=await runBusinessAI({prompt,schema});
+    if(!ai) return NextResponse.json({
+      ok:false,
+      error:"No AI provider was available for outreach drafting. The agent will retry on the next heartbeat."
+    },{status:503});
     let pack:any;
-    try{pack=JSON.parse(String(aiData?.output_text||""));}catch{throw new Error("Central brain returned an invalid outreach pack.");}
+    try{pack=JSON.parse(String(ai.text||""));}catch{throw new Error("Business AI returned an invalid outreach pack.");}
     const leads=Array.isArray(pack?.leads)?pack.leads.slice(0,5):[];
 
     const notes=leads.map((lead:any,i:number)=>[
