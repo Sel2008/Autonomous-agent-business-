@@ -4,10 +4,7 @@ import { supabaseConfigured, supabaseRequest } from "../../../../lib/supabase";
 
 function deterministicMonetizationPlan(opportunity:any, state:any) {
   const name = String(opportunity?.name || "the selected opportunity").trim();
-  const evidenceSummary = Object.entries(state || {})
-    .map(([k,v]) => `${k}: ${String(v)}`)
-    .join("; ");
-
+  const evidenceSummary = Object.entries(state || {}).map(([k,v]) => `${k}: ${String(v)}`).join("; ");
   const lower = name.toLowerCase();
   let offer = `A small, productized first service for ${name}`;
   let customer = "A narrow customer segment that already has the stated problem and can make a small purchasing decision.";
@@ -19,7 +16,6 @@ function deterministicMonetizationPlan(opportunity:any, state:any) {
   let expectedCosts = "R0 cash target for the first test: use existing free tools and customer-provided assets where possible. Reassess any unavoidable paid cost before spending.";
   let risks = "Demand, access, delivery time, pricing and competition remain hypotheses until a real prospect responds or pays. Do not claim revenue before payment.";
   let successMetric = "At least one qualified prospect agrees to the paid pilot at the proposed price, with delivery effort and margin recorded.";
-
   if (lower.includes("short-form") || lower.includes("video")) {
     offer = "A fixed-scope short-form video starter pack for a local SMB: a small batch of edited vertical clips from customer-provided footage.";
     customer = "Local SMBs that already have phone footage or existing content but need consistent short-form social content.";
@@ -49,13 +45,7 @@ function deterministicMonetizationPlan(opportunity:any, state:any) {
     pricing = "Test a fixed-price discovery/prototype before proposing a larger implementation.";
     risks = "Integration reliability, data privacy, access permissions and unclear ROI are key risks; test on non-critical workflows first.";
   }
-
-  return {
-    offer, idealCustomer:customer, problemSolved:problem, deliverable, pricing,
-    acquisition, firstPaidTest, expectedCosts, risks, successMetric,
-    planningMode:"DETERMINISTIC_FALLBACK",
-    verificationSnapshot:evidenceSummary
-  };
+  return {offer, idealCustomer:customer, problemSolved:problem, deliverable, pricing, acquisition, firstPaidTest, expectedCosts, risks, successMetric, upfrontCost:0, fundingRequired:false, fundingReason:"", planningMode:"DETERMINISTIC_FALLBACK", verificationSnapshot:evidenceSummary};
 }
 
 function errorText(value: unknown, fallback: string) {
@@ -67,7 +57,6 @@ function errorText(value: unknown, fallback: string) {
 export async function POST(req: Request) {
   try {
     if (!supabaseConfigured()) return NextResponse.json({ ok:false, error:"Supabase is not configured." }, { status:503 });
-
     const body = await req.json().catch(() => ({}));
     const opportunityId = String(body?.opportunityId || "").trim();
     if (!opportunityId) return NextResponse.json({ ok:false, error:"opportunityId is required." }, { status:400 });
@@ -89,11 +78,25 @@ export async function POST(req: Request) {
       return acc;
     }, {demand:"UNVERIFIED",access:"UNVERIFIED",margin:"UNVERIFIED",repeatability:"UNVERIFIED",risk:"UNVERIFIED"});
 
-    const schema={type:"object",additionalProperties:false,properties:{\n      offer:{type:"string"},idealCustomer:{type:"string"},problemSolved:{type:"string"},deliverable:{type:"string"},\n      pricing:{type:"string"},acquisition:{type:"string"},firstPaidTest:{type:"string"},expectedCosts:{type:"string"},\n      risks:{type:"string"},successMetric:{type:"string"},upfrontCost:{type:"number"},fundingRequired:{type:"boolean"},fundingReason:{type:"string"}\n    },required:["offer","idealCustomer","problemSolved","deliverable","pricing","acquisition","firstPaidTest","expectedCosts","risks","successMetric","upfrontCost","fundingRequired","fundingReason"]
-    const prompt=[
+    const schema = {
+      type:"object",
+      additionalProperties:false,
+      properties:{
+        offer:{type:"string"}, idealCustomer:{type:"string"}, problemSolved:{type:"string"}, deliverable:{type:"string"},
+        pricing:{type:"string"}, acquisition:{type:"string"}, firstPaidTest:{type:"string"}, expectedCosts:{type:"string"},
+        risks:{type:"string"}, successMetric:{type:"string"}, upfrontCost:{type:"number"}, fundingRequired:{type:"boolean"},
+        fundingReason:{type:"string"}
+      },
+      required:["offer","idealCustomer","problemSolved","deliverable","pricing","acquisition","firstPaidTest","expectedCosts","risks","successMetric","upfrontCost","fundingRequired","fundingReason"]
+    };
+
+    const prompt = [
       "Create a realistic first paid test from the validated business opportunity.",
       "Do not invent evidence or promise revenue. Keep the test zero or low cash.",
       "Return one concrete offer, customer, problem, deliverable, pricing hypothesis, acquisition method, first paid test, costs, risks, and success metric.",
+      "Current capital is R0. Prefer a genuinely zero-upfront test using free resources and customer-provided assets where possible.",
+      "If the test genuinely cannot start at R0, put the exact required upfront amount in upfrontCost and explain it in fundingReason. Do not hide required upfront cost in expectedCosts.",
+      "Never label projected earnings as revenue.",
       "OPPORTUNITY:",JSON.stringify(opportunity),"VERIFICATION:",JSON.stringify(state)
     ].join("\n");
 
@@ -102,8 +105,7 @@ export async function POST(req: Request) {
     let planningMode = "AI";
     let provider = "UNKNOWN";
     if (result) {
-      try { plan=JSON.parse(result.text); provider=result.provider; }
-      catch { plan=null; }
+      try { plan=JSON.parse(result.text); provider=result.provider; } catch { plan=null; }
     }
     if (!plan || typeof plan.upfrontCost !== "number" || typeof plan.fundingRequired !== "boolean" || typeof plan.fundingReason !== "string") {
       plan = deterministicMonetizationPlan(opportunity, state);
@@ -120,13 +122,10 @@ export async function POST(req: Request) {
     await supabaseRequest("evidence",{
       method:"POST",
       body:JSON.stringify({
-        opportunity_id:opportunityId,
-        type:"MONETIZATION_PLAN",
+        opportunity_id:opportunityId,type:"MONETIZATION_PLAN",
         claim:"Agent-created first paid test plan for "+String(opportunity.name||"opportunity"),
         source:planningMode==="AI" ? "Central business brain ("+provider+")" : "Deterministic monetization planner (AI unavailable)",
-        checked_on:new Date().toISOString().slice(0,10),
-        quality:"CHECKED",
-        notes
+        checked_on:new Date().toISOString().slice(0,10),quality:"CHECKED",notes
       }),
       headers:{"Prefer":"return=minimal"}
     });
@@ -139,7 +138,11 @@ export async function POST(req: Request) {
       });
       const existingFunding=await supabaseRequest("funding_requests?opportunity_id=eq."+encodeURIComponent(opportunityId)+"&status=eq.QUEUED&select=*");
       if(!Array.isArray(existingFunding)||existingFunding.length===0){
-        await supabaseRequest("funding_requests",{method:"POST",body:JSON.stringify({opportunity_id:opportunityId,requested_amount:upfrontCost,currency:"ZAR",reason:String(plan.fundingReason||"Capital required before execution."),status:"QUEUED",source:"BOOTSTRAP_CAPITAL"}),headers:{"Prefer":"return=minimal"}});
+        await supabaseRequest("funding_requests",{
+          method:"POST",
+          body:JSON.stringify({opportunity_id:opportunityId,requested_amount:upfrontCost,currency:"ZAR",reason:String(plan.fundingReason||"Capital required before execution."),status:"QUEUED",source:"BOOTSTRAP_CAPITAL"}),
+          headers:{"Prefer":"return=minimal"}
+        });
       }
       return NextResponse.json({ok:true,opportunityId,plan,planningMode,provider,capitalStatus:"QUEUED_CAPITAL",fundingRequired:true,nextAction:"Find legitimate zero-upfront bootstrap work while this business waits for capital."});
     }
@@ -165,22 +168,15 @@ export async function POST(req: Request) {
     let approvalId=Array.isArray(existingApprovals)&&existingApprovals[0]?.id ? String(existingApprovals[0].id) : "";
     if(!approvalId) {
       const createdApproval=await supabaseRequest("approvals",{
-        method:"POST",
-        body:JSON.stringify({
-          title:approvalTitle,
-          tier:"T1",
-          status:"PENDING"
-        }),
+        method:"POST",body:JSON.stringify({title:approvalTitle,tier:"T1",status:"PENDING"}),
         headers:{"Prefer":"return=representation"}
       });
-      if(Array.isArray(createdApproval)&&createdApproval[0]?.id) {
-        approvalId=String(createdApproval[0].id);
-      } else {
+      if(Array.isArray(createdApproval)&&createdApproval[0]?.id) approvalId=String(createdApproval[0].id);
+      else {
         const refreshed=await supabaseRequest("approvals?title=eq."+encodeURIComponent(approvalTitle)+"&select=*");
         if(Array.isArray(refreshed)&&refreshed[0]?.id) approvalId=String(refreshed[0].id);
       }
     }
-
     return NextResponse.json({ok:true,opportunityId,plan,planningMode,provider,approvalId,nextTask:taskId});
   } catch(error) {
     return NextResponse.json({ok:false,error:errorText(error,"Monetization planning failed.")},{status:500});
