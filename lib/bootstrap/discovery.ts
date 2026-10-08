@@ -36,7 +36,7 @@ const schema={
 export async function discoverViaExa(query:string):Promise<ProviderDiscoveryResult[]>{
   const results=await exaSearch(query);
   if(!results.length) throw new Error("Exa returned zero web results for the bootstrap discovery query.");
-  const compact=results.map((r:any)=>({title:r.title,url:r.url,text:String(r.text||"").slice(0,5000)}));
+  const compact=results.slice(0,8).map((r:any)=>({title:r.title,url:r.url,text:String(r.text||"").slice(0,2200)}));
   const ai=await runBusinessAIWithDiagnostics({prompt:[
     "You are the safety verifier for an autonomous bootstrap-earnings engine.",
     "Extract only opportunities supported by the supplied web-source text.",
