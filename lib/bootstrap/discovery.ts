@@ -46,7 +46,7 @@ export async function discoverViaExa(query:string):Promise<ProviderDiscoveryResu
     "A provider is eligibilityVerified=true ONLY when the source explicitly supports the relevant worker eligibility; otherwise false.",
     "Any pay-to-work, deposit-to-unlock, crypto deposit, starter package, fake engagement, or prohibited automation must be BLOCKED.",
     "estimatedPayout must be 0 when no concrete payout is supported by the source.",
-    "Return only safe candidates. Keep sourceUrl equal to a supplied source URL.",
+    "Return only candidates with a real source URL from the supplied results. Do not manufacture URLs.",
     "SOURCES:",JSON.stringify(compact)
   ].join("\n"),schema});
   if(!ai) return [];
@@ -64,7 +64,8 @@ export async function discoverViaExa(query:string):Promise<ProviderDiscoveryResu
 }
 
 export function opportunityRow(x:ProviderDiscoveryResult){
-  const blocked=x.executionMode==="BLOCKED" || x.riskStatus==="BLOCKED" || x.upfrontCost>0 || !x.automationAllowed;
+  const blocked=x.executionMode==="BLOCKED" || x.riskStatus==="BLOCKED" || x.upfrontCost>0;
+  const autonomousReady=!blocked && x.automationAllowed && x.eligibilityVerified && x.payoutVerified && x.executionMode!=="MANUAL_ONLY";
   return {
     id:idFor(x.provider+"-"+x.title),
     title:x.title,provider:x.provider,source_url:x.sourceUrl,work_type:x.workType,
@@ -72,7 +73,7 @@ export function opportunityRow(x:ProviderDiscoveryResult){
     upfront_cost:x.upfrontCost,automation_allowed:x.automationAllowed,
     eligibility_verified:x.eligibilityVerified,payout_verified:x.payoutVerified,
     risk_status:blocked?"BLOCKED":x.riskStatus,
-    status:blocked?"BLOCKED":(x.eligibilityVerified&&x.payoutVerified&&x.automationAllowed?"READY":"DISCOVERED"),
+    status:blocked?"BLOCKED":(autonomousReady?"READY":"DISCOVERED"),
     notes:JSON.stringify({executionMode:x.executionMode,details:x.notes,discoveredAt:new Date().toISOString()})
   };
 }
