@@ -85,7 +85,7 @@ export default function Home(){
  return <main className="shell">
   <header className="top">
    <div><div className="brand">Autonomous Business Agent</div><div className="subbrand">Owner Console · Agent Activity · Business Results</div></div>
-   <div className="actions"><span className="badge">{dbStatus==="connected"?"DB CONNECTED":dbStatus==="checking"?"DB CHECKING":"LOCAL FALLBACK"}</span><span className="pill">{agentAction?.brain||"DETERMINISTIC"} BRAIN</span><a href="/discovery" className="pill" style={{textDecoration:"none"}}>Research & Discovery</a></div>
+   <div className="actions"><span className="badge">{dbStatus==="connected"?"DB CONNECTED":dbStatus==="checking"?"DB CHECKING":"LOCAL FALLBACK"}</span><span className="pill">{agentAction?.brain||"DETERMINISTIC"} BRAIN</span><a href="/discovery" className="pill" style={{textDecoration:"none"}}>Research & Discovery</a><a href="/bootstrap" className="pill" style={{textDecoration:"none"}}>Bootstrap Earnings</a></div>
   </header>
 
   <section className="hero">
