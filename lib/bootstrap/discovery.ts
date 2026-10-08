@@ -1,8 +1,16 @@
+import { createHash } from "crypto";
 import { runBusinessAIWithDiagnostics } from "../ai-router";
 import type { ProviderDiscoveryResult, ExecutionMode, RiskStatus } from "./types";
 
 function idFor(value:string){
-  return "boot-"+value.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,70);
+  // bootstrap_opportunities.id is a UUID in Supabase. Keep discovery IDs
+  // deterministic so repeated discovery upserts the same opportunity instead
+  // of creating duplicates, while still producing a valid UUID.
+  const hex=createHash("sha1").update(value.trim().toLowerCase()).digest("hex").slice(0,32);
+  const chars=hex.split("");
+  chars[12]="5";
+  chars[16]=((parseInt(chars[16],16)&0x3)|0x8).toString(16);
+  return chars.join("").replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/,"$1-$2-$3-$4-$5");
 }
 
 async function exaSearch(query:string){
