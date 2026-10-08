@@ -11,22 +11,22 @@ const empty:BootstrapData={configured:true,schemaReady:false,balances:{available
 
 export default function BootstrapPage(){
  const [data,setData]=useState<BootstrapData>(empty);
- const [loading,setLoading]=useState(true);
+ const [loading,setLoading]=useState(true);\n const [running,setRunning]=useState(false);\n const [message,setMessage]=useState("");
  async function load(){
   try{const r=await fetch("/api/bootstrap",{cache:"no-store"});setData({...empty,...await r.json()});}
   catch{setData({...empty,error:"Bootstrap engine could not be reached."})}
   finally{setLoading(false)}
  }
- useEffect(()=>{load();const t=window.setInterval(load,3000);return()=>window.clearInterval(t)},[]);
+ useEffect(()=>{load();const t=window.setInterval(load,3000);return()=>window.clearInterval(t)},[]);\n async function discoverAndVerify(){\n  setRunning(true);setMessage("");\n  try{\n   const d=await fetch("/api/bootstrap/discover",{method:"POST"});\n   const dj=await d.json();\n   if(!d.ok||!dj.ok) throw new Error(dj.error||"Discovery failed.");\n   const v=await fetch("/api/bootstrap/run",{method:"POST"});\n   const vj=await v.json();\n   if(!v.ok||!vj.ok) throw new Error(vj.error||"Verification failed.");\n   setMessage(`Discovery found ${dj.discovered||0} candidates; verified ${vj.verified||0}. No work was executed.`);\n   await load();\n  }catch(e){setMessage(e instanceof Error?e.message:"Bootstrap discovery failed.");}\n  finally{setRunning(false)}\n }
 
  return <main className="shell">
   <header className="top">
    <div><div className="brand">Bootstrap Earnings</div><div className="subbrand">Funding Engine · Earnings · Capital Queue</div></div>
-   <div className="actions"><a href="/" className="pill" style={{textDecoration:"none"}}>← Dashboard</a></div>
+   <div className="actions"><button className="pill" onClick={discoverAndVerify} disabled={running}>{running?"Discovering…":"Discover & verify"}</button><a href="/" className="pill" style={{textDecoration:"none"}}>← Dashboard</a></div>
   </header>
   <section className="hero">
    <div className="eyebrow">BOOTSTRAP FUNDING ENGINE</div><h1>Earn first. Spend later.</h1>
-   <p>The agent can pursue legitimate zero-upfront work, record real payouts, accumulate capital, and later propose funding for a queued business. It never treats projected earnings as cash.</p>
+   <p>The agent can discover legitimate zero-upfront work, verify provider rules and payout evidence, and only later execute work when automation is explicitly permitted. It never treats projected earnings as cash.</p>
    <div className="notice"><strong>Capital rule:</strong> available capital starts at R0.00. No money is spent to unlock work, and no earned funds are moved or spent without the required owner approval.</div>
   </section>
   {!data.schemaReady&&<section className="section card"><div className="eyebrow">SETUP REQUIRED</div><h2>The earnings ledger is ready in code, but its persistent tables are not installed yet.</h2><p className="muted">Apply <code>supabase/capital_schema.sql</code> to the Supabase project, then this page becomes the live earnings ledger.</p></section>}
@@ -48,10 +48,10 @@ export default function BootstrapPage(){
   <section className="section card"><div className="eyebrow">CAPITAL QUEUE</div><h2>Businesses waiting for earned funds</h2><p className="muted">A business that cannot start at R0 is not discarded. It is queued while the earning engine looks for legitimate zero-cost work.</p>
    {data.fundingRequests.length===0?<div className="notice">No funding request is currently queued.</div>:data.fundingRequests.map((f:any)=><div className="row" key={f.id}><div><strong>{f.opportunity_name||f.opportunity_id}</strong><div className="muted">Needs R{Number(f.requested_amount||0).toFixed(2)} · {f.status}</div><div className="muted">{f.reason}</div></div><span className="pill">{f.status}</span></div>)}
   </section>
-  <section className="section card"><div className="eyebrow">VERIFIED EARNING OPPORTUNITIES</div><h2>Safe work candidates</h2>
-   {data.opportunities.length===0?<p className="muted">No earning opportunity has passed the bootstrap safety gates yet.</p>:data.opportunities.map((o:any)=><div className="row" key={o.id}><div><strong>{o.title}</strong><div className="muted">{o.provider} · {o.status} · Upfront R{Number(o.upfront_cost||0).toFixed(2)}</div><div className="muted">{o.notes}</div></div><span className="pill">{o.risk_status}</span></div>)}
+  <section className="section card"><div className="eyebrow">BOOTSTRAP OPPORTUNITY DISCOVERY</div><h2>Work candidates</h2><p className="muted">DISCOVERED = needs verification. VERIFIED = provider/payout/eligibility checked but may be manual-only. READY = all gates passed for autonomous execution.</p>
+   {data.opportunities.length===0?<p className="muted">No bootstrap opportunity has been discovered yet. Use Discover & verify.</p>:data.opportunities.map((o:any)=><div className="row" key={o.id}><div><strong>{o.title}</strong><div className="muted">{o.provider} · {o.status} · Upfront R{Number(o.upfront_cost||0).toFixed(2)} · Payout: {o.payout_description||"Not verified"}</div><div className="muted">{o.notes}</div></div><span className="pill">{o.status==="READY"?"AUTONOMOUS READY":o.status}</span></div>)}
   </section>
   <section className="section card"><div className="eyebrow">NON-NEGOTIABLE SAFETY RULES</div>{data.safety.map((s,i)=><div className="row" key={i}><span>✓</span><div>{s}</div></div>)}</section>
-  {data.error&&<div className="notice">{data.error}</div>}{loading&&<p className="muted">Loading live capital ledger…</p>}
+  {message&&<div className="notice">{message}</div>}{data.error&&<div className="notice">{data.error}</div>}{loading&&<p className="muted">Loading live capital ledger…</p>}
  </main>
 }
