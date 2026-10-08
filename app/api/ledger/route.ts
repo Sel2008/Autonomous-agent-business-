@@ -62,6 +62,13 @@ export async function POST(req: Request) {
       result = await supabaseRequest("approvals", { method:"POST", body:JSON.stringify(payload) });
     } else if (action === "approval-decide") {
       result = await supabaseRequest("approvals?id=eq."+encodeURIComponent(payload.id), { method:"PATCH", body:JSON.stringify({status:payload.status, decided_at:new Date().toISOString()}) });
+      if (payload.status === "REJECTED" && payload.opportunityId) {
+        await supabaseRequest("opportunities?id=eq."+encodeURIComponent(payload.opportunityId), { method:"PATCH", body:JSON.stringify({status:"REJECTED", next_action:"Owner rejected this monetization test; the agent should move to the next eligible zero-capital opportunity."}), headers:{"Prefer":"return=minimal"} });
+        const rejectedTasks=await supabaseRequest("tasks?opportunity_id=eq."+encodeURIComponent(payload.opportunityId)+"&status=eq.READY&select=*");
+        if(Array.isArray(rejectedTasks)) for(const task of rejectedTasks){
+          if(String(task?.title||"").toLowerCase().includes("outreach") && task?.id) await supabaseRequest("tasks?id=eq."+encodeURIComponent(String(task.id)),{method:"PATCH",body:JSON.stringify({status:"BLOCKED"}),headers:{"Prefer":"return=minimal"}});
+        }
+      }
     } else if (action === "evidence-create") {
       result = await supabaseRequest("evidence", { method:"POST", body:JSON.stringify(payload) });
     } else if (action === "evidence-quality") {
