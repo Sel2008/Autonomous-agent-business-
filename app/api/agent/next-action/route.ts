@@ -63,6 +63,7 @@ export async function GET() {
       approvals: liveApprovals,
       verification: grouped,
       opportunities: liveOpportunities,
+      evidence: liveEvidence,
       activeRunId
     });
 
