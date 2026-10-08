@@ -5,6 +5,16 @@ import { useEffect, useMemo, useState } from "react";
 type Opportunity={id:string;name:string;model:string;capital:string;status:string;why:string;next:string};
 type Task={id:string;title:string;status:"READY"|"IN PROGRESS"|"BLOCKED"|"COMPLETE";opportunityId:string};
 type Approval={id:string;title:string;tier:"T1"|"T2"|"T3";status:"PENDING"|"APPROVED"|"REJECTED"};
+
+function parsePlanNotes(notes:string){
+ const plan:Record<string,string>={};
+ String(notes||"").split("\n").forEach(line=>{const i=line.indexOf(": ");if(i>0)plan[line.slice(0,i).trim()]=line.slice(i+2).trim()});
+ return plan;
+}
+
+const planLabels:Record<string,string>={
+ offer:"Offer",idealCustomer:"Ideal customer",problemSolved:"Problem solved",deliverable:"Deliverable",pricing:"Pricing test",acquisition:"Customer acquisition",firstPaidTest:"First paid test",expectedCosts:"Expected cash cost",risks:"Risks",successMetric:"Success metric"
+};
 type Evidence={id:string;opportunityId:string;type:string;claim:string;source:string;checked:string;quality:"UNVERIFIED"|"CHECKED"|"STRONG";notes:string};
 type Verification={demand:"UNVERIFIED"|"CHECKED"|"STRONG";access:"UNVERIFIED"|"CHECKED"|"STRONG";margin:"UNVERIFIED"|"CHECKED"|"STRONG";repeatability:"UNVERIFIED"|"CHECKED"|"STRONG";risk:"UNVERIFIED"|"CHECKED"|"STRONG"};
 
@@ -28,6 +38,7 @@ export default function Home(){
  const [selected,setSelected]=useState<string|null>(null);
  const [missionSaved,setMissionSaved]=useState(false);
  const [agentRun,setAgentRun]=useState<any>(null);
+ const [expandedApproval,setExpandedApproval]=useState<string|null>(null);
 
  const load=async()=>{
   try{
@@ -70,6 +81,10 @@ export default function Home(){
  const nextTask=useMemo(()=>tasks.find(t=>t.status!=="COMPLETE" && t.status!=="BLOCKED"),[tasks]);
  const selectedOpportunity=opportunities.find(o=>o.id===selected);
  const winnerOpportunity=opportunities.find(o=>String(o.status).toUpperCase()==="SELECTED");
+ const pendingApproval=approvals.find(a=>a.status==="PENDING");
+ const winnerPlanEvidence=winnerOpportunity ? evidence.find(e=>e.opportunityId===winnerOpportunity.id && e.type==="MONETIZATION_PLAN") : undefined;
+ const winnerPlan=winnerPlanEvidence ? parsePlanNotes(winnerPlanEvidence.notes) : {};
+ const monetizationApproval=pendingApproval && pendingApproval.title.toLowerCase().startsWith("approve monetization test") ? pendingApproval : null;
 
  async function decideApproval(id:string,status:"APPROVED"|"REJECTED"){
   setApprovals(x=>x.map(a=>a.id===id?{...a,status}:a));
@@ -101,7 +116,28 @@ export default function Home(){
   <section className="grid metrics">
    <div className="card"><div className="muted">Agent status</div><div className="metric" style={{fontSize:24}}>{agentRun?.status||"READY"}</div><div className="muted">{agentRun?.summary||"The agent is ready for a mission."}</div></div>
    <div className="card"><div className="muted">Live opportunities</div><div className="metric">{opportunities.length}</div><div className="muted">Research-generated records only.</div></div>
-   <div className="card"><div className="muted">Pending approvals</div><div className="metric">{pendingApprovals}</div><div className="muted">Owner decisions required.</div></div>
+   <button className="card" onClick={()=>pendingApproval&&setExpandedApproval(pendingApproval.id)} style={{textAlign:"left",cursor:pendingApproval?"pointer":"default",border:pendingApproval?"1px solid rgba(130,210,255,.45)":undefined}}>
+    <div className="muted">Owner approval</div><div className="metric">{pendingApprovals}</div>
+    <div className="muted">{pendingApproval ? "Decision required · tap to review" : "No owner decision required"}</div>
+   </button>
+  </section>
+
+  {pendingApproval&&<section id="owner-approval" className="section card" style={{border:"1px solid rgba(130,210,255,.45)"}}>
+   <div className="eyebrow">OWNER APPROVAL REQUIRED</div>
+   <h2 style={{marginBottom:8}}>{pendingApproval.title}</h2>
+   <p className="muted">The agent has completed its safe preparation and is paused. Review exactly what will happen next before allowing it to continue.</p>
+   {monetizationApproval&&winnerOpportunity&&winnerPlanEvidence&&<div className="card" style={{marginTop:16,background:"rgba(255,255,255,.025)"}}>
+    <div className="eyebrow">MONETIZATION PLAN READY FOR YOUR DECISION</div>
+    <h3 style={{margin:"8px 0"}}>{winnerOpportunity.name}</h3>
+    <div className="grid two" style={{marginTop:12}}>
+     {Object.entries(planLabels).map(([key,label])=>winnerPlan[key]?<div key={key} style={{padding:"10px 0"}}><div className="muted">{label}</div><div>{winnerPlan[key]}</div></div>:null)}
+    </div>
+   </div>}
+   <div className="actions" style={{marginTop:16}}>
+    <button className="button" onClick={()=>decideApproval(pendingApproval.id,"APPROVED")}>Approve & let agent continue</button>
+    <button className="small-button" onClick={()=>decideApproval(pendingApproval.id,"REJECTED")}>Reject / stop this test</button>
+   </div>
+   <div className="muted" style={{marginTop:10}}>Approval is required only for the consequential step. Research and internal preparation remain agent-managed.</div>
   </section>
 
   <section className="section card">
@@ -121,7 +157,7 @@ export default function Home(){
    </section>
    <section className="section grid two">
     <div className="card"><div className="eyebrow">AGENT TASK QUEUE</div><h2>Validation work</h2>{tasks.length===0?<p className="muted">No live validation tasks yet.</p>:tasks.map(t=><div className="row" key={t.id}><div><strong>{t.title}</strong><div className="muted">{t.status}</div></div><span className="pill">Agent-managed</span></div>)}</div>
-    <div className="card"><div className="eyebrow">OWNER DECISIONS</div><h2>Approval center</h2>{approvals.length===0?<p className="muted">No approval requests.</p>:approvals.map(a=><div className="row" key={a.id}><div><strong>{a.title}</strong><div className="muted">{a.tier} · {a.status}</div></div>{a.status==="PENDING"&&<div className="actions"><button className="small-button" onClick={()=>decideApproval(a.id,"APPROVED")}>Approve</button><button className="small-button" onClick={()=>decideApproval(a.id,"REJECTED")}>Reject</button></div>}</div>)}</div>
+    <div id="approval-center" className="card"><div className="eyebrow">OWNER DECISIONS</div><h2>Approval center</h2><p className="muted">This is where the owner controls consequential agent actions. A pending approval pauses the heartbeat until you decide.</p>{approvals.length===0?<p className="muted">No approval requests.</p>:approvals.map(a=><div className="row" key={a.id}><div><strong>{a.title}</strong><div className="muted">{a.tier} · {a.status}</div></div>{a.status==="PENDING"&&<div className="actions"><button className="small-button" onClick={()=>setExpandedApproval(expandedApproval===a.id?null:a.id)}>{expandedApproval===a.id?"Hide details":"Review"}</button></div>}{a.status==="PENDING"&&expandedApproval===a.id&&<div style={{gridColumn:"1 / -1",marginTop:12}}><div className="notice">Review the detailed approval panel above, then choose <strong>Approve & let agent continue</strong> or <strong>Reject / stop this test</strong>.</div></div>}</div>)}</div>
    </section>
   </>}
 
