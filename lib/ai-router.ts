@@ -15,7 +15,7 @@ const providers: Array<{name:AIProvider; key:string; baseUrl:string; model:strin
   { name:"GEMINI", key:"GEMINI_API_KEY", baseUrl:"", model:process.env.GEMINI_MODEL || "gemini-3.6-flash" },
   { name:"GROQ", key:"GROQ_API_KEY", baseUrl:"https://api.groq.com/openai/v1", model:process.env.GROQ_MODEL || "openai/gpt-oss-120b" },
   { name:"CEREBRAS", key:"CEREBRAS_API_KEY", baseUrl:"https://api.cerebras.ai/v1", model:process.env.CEREBRAS_MODEL || "gpt-oss-120b" },
-  { name:"OPENROUTER", key:"OPENROUTER_API_KEY", baseUrl:"https://openrouter.ai/api/v1", model:process.env.OPENROUTER_MODEL || "openai/gpt-oss-120b:free" },
+  { name:"OPENROUTER", key:"OPENROUTER_API_KEY", baseUrl:"https://openrouter.ai/api/v1", model:(process.env.OPENROUTER_MODEL && process.env.OPENROUTER_MODEL!=="openai/gpt-oss-120b:free") ? process.env.OPENROUTER_MODEL : "openrouter/free" },
   { name:"OPENAI", key:"OPENAI_API_KEY", baseUrl:"https://api.openai.com/v1", model:process.env.OPENAI_MODEL || "gpt-5.6-luna" }
 ];
 
@@ -27,7 +27,7 @@ function extractOpenAIText(data:any): string {
   return "";
 }
 
-async function callGemini(p:any, apiKey:string, input:RunAIInput):Promise<string> {
+function geminiSchema(schema:any):any {\n  if(!schema || typeof schema!=="object") return schema;\n  if(Array.isArray(schema)) return schema.map(geminiSchema);\n  const out:any={};\n  for(const [key,value] of Object.entries(schema)) {\n    if(key==="additionalProperties") continue;\n    out[key]=geminiSchema(value);\n  }\n  return out;\n}\n\nasync function callGemini(p:any, apiKey:string, input:RunAIInput):Promise<string> {
   const response = await fetch(
     "https://generativelanguage.googleapis.com/v1beta/models/"+encodeURIComponent(p.model)+":generateContent?key="+encodeURIComponent(apiKey),
     {
@@ -36,7 +36,7 @@ async function callGemini(p:any, apiKey:string, input:RunAIInput):Promise<string
       body:JSON.stringify({
         contents:[{parts:[{text:input.prompt}]}],
         generationConfig: input.schema
-          ? {responseMimeType:"application/json",responseSchema:input.schema}
+          ? {responseMimeType:"application/json",responseSchema:geminiSchema(input.schema)}
           : undefined
       }),
       cache:"no-store"
