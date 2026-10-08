@@ -7,14 +7,14 @@ function idFor(value:string){
 
 async function exaSearch(query:string){
   const key=process.env.EXA_API_KEY;
-  if(!key) return [];
+  if(!key) throw new Error("EXA_API_KEY is missing in the server environment.");
   const r=await fetch("https://api.exa.ai/search",{
     method:"POST",
     headers:{"x-api-key":key,"Content-Type":"application/json"},
     body:JSON.stringify({query,numResults:12,type:"auto",contents:{text:{maxCharacters:5000}}}),
     cache:"no-store"
   });
-  if(!r.ok) return [];
+  if(!r.ok) throw new Error(`Exa discovery failed with HTTP ${r.status}.`);
   const data=await r.json().catch(()=>null);
   return Array.isArray(data?.results)?data.results:[];
 }
@@ -35,7 +35,7 @@ const schema={
 
 export async function discoverViaExa(query:string):Promise<ProviderDiscoveryResult[]>{
   const results=await exaSearch(query);
-  if(!results.length) return [];
+  if(!results.length) throw new Error("Exa returned zero web results for the bootstrap discovery query.");
   const compact=results.map((r:any)=>({title:r.title,url:r.url,text:String(r.text||"").slice(0,5000)}));
   const ai=await runBusinessAI({prompt:[
     "You are the safety verifier for an autonomous bootstrap-earnings engine.",
@@ -49,10 +49,11 @@ export async function discoverViaExa(query:string):Promise<ProviderDiscoveryResu
     "Return only candidates with a real source URL from the supplied results. Do not manufacture URLs.",
     "SOURCES:",JSON.stringify(compact)
   ].join("\n"),schema});
-  if(!ai) return [];
+  if(!ai) throw new Error("All configured AI providers failed to return a usable bootstrap discovery result.");
   let parsed:any=null; try{parsed=JSON.parse(ai.text)}catch{}
   const list=Array.isArray(parsed?.opportunities)?parsed.opportunities:[];
-  return list.map((x:any)=>({
+  const allowedUrls=new Set(compact.map((x:any)=>String(x.url||"")).filter(Boolean));
+  return list.filter((x:any)=>allowedUrls.has(String(x?.sourceUrl||""))).map((x:any)=>({
     provider:String(x.provider),title:String(x.title),sourceUrl:String(x.sourceUrl),
     workType:String(x.workType),payoutDescription:String(x.payoutDescription),
     estimatedPayout:Math.max(0,Number(x.estimatedPayout||0)),currency:String(x.currency||"USD"),
