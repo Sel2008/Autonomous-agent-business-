@@ -42,8 +42,9 @@ async function callGemini(p:any, apiKey:string, input:RunAIInput):Promise<string
       cache:"no-store"
     }
   );
-  if(!response.ok) return "";
-  const data=await response.json().catch(()=>null);
+  const raw=await response.text();
+  if(!response.ok) throw new Error(`HTTP ${response.status}: ${raw.slice(0,240)}`);
+  const data=JSON.parse(raw);
   return String(data?.candidates?.[0]?.content?.parts?.map((x:any)=>x?.text||"").join("")||"").trim();
 }
 
@@ -65,31 +66,44 @@ async function callOpenAICompatible(p:any, apiKey:string, input:RunAIInput):Prom
     body:JSON.stringify(body),
     cache:"no-store"
   });
-  if(!response.ok) return "";
-  return extractOpenAIText(await response.json().catch(()=>null));
+  const raw=await response.text();
+  if(!response.ok) throw new Error(`HTTP ${response.status}: ${raw.slice(0,240)}`);
+  return extractOpenAIText(JSON.parse(raw));
 }
 
-export async function runBusinessAI(input:RunAIInput):Promise<RunAIResult|null> {
+export type AIProviderDiagnostic = {
+  provider: AIProvider;
+  model: string;
+  error: string;
+};
+
+export async function runBusinessAIWithDiagnostics(input:RunAIInput):Promise<{result:RunAIResult|null; diagnostics:AIProviderDiagnostic[]}> {
+  const diagnostics:AIProviderDiagnostic[]=[];
   for(const p of providers) {
     const apiKey=process.env[p.key];
-    if(!apiKey) continue;
+    if(!apiKey) {
+      diagnostics.push({provider:p.name,model:p.model,error:"API key is not configured"});
+      continue;
+    }
     try {
       let text = p.name==="GEMINI"
         ? await callGemini(p,apiKey,input)
         : await callOpenAICompatible(p,apiKey,input);
-      // Some free OpenAI-compatible providers reject strict json_schema response_format.
-      // Retry without provider-specific structured-output enforcement; the prompt still
-      // requires JSON and the caller validates/parses the result.
       if(!text && input.schema){
         text = p.name==="GEMINI"
           ? await callGemini(p,apiKey,{...input,schema:undefined})
           : await callOpenAICompatible(p,apiKey,{...input,schema:undefined});
       }
-      if(text) return {text,provider:p.name,model:p.model};
-    } catch {
-      // A provider failure is expected in a free-tier failover chain.
-      // Continue to the next provider instead of stopping the agent.
+      if(text) return {result:{text,provider:p.name,model:p.model},diagnostics};
+      diagnostics.push({provider:p.name,model:p.model,error:"Provider returned an empty response"});
+    } catch (e:any) {
+      diagnostics.push({provider:p.name,model:p.model,error:String(e?.message||e).slice(0,320)});
     }
   }
-  return null;
+  return {result:null,diagnostics};
+}
+
+export async function runBusinessAI(input:RunAIInput):Promise<RunAIResult|null> {
+  const {result}=await runBusinessAIWithDiagnostics(input);
+  return result;
 }
