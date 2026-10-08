@@ -16,6 +16,7 @@ export function getNextAction(input: {
   approvals: Approval[];
   verification: Record<string, Verification>;
   opportunities?: Opportunity[];
+  evidence?: any[];
   activeRunId?: string;
 }): AgentAction {
   const pendingApproval = input.approvals.find((a) => a.status === "PENDING");
@@ -49,8 +50,6 @@ export function getNextAction(input: {
       (currentOpportunityIds.size === 0 || currentOpportunityIds.has(String(op.id)))
   );
 
-  // Verification and selection are hard gates. An old IN PROGRESS monetization
-  // task must never outrank these gates.
   if (hasUnverifiedCandidates) {
     const candidates = verificationEntries
       .map(([opportunityId, dimensions], index) => {
@@ -92,18 +91,43 @@ export function getNextAction(input: {
     }
 
     const selectedId = String(selected.id);
-    const selectedPlanTask = input.tasks.find(
+    const hasMonetizationPlan = (input.evidence || []).some(
+      (e: any) =>
+        String(e?.opportunity_id || "") === selectedId &&
+        String(e?.type || "") === "MONETIZATION_PLAN"
+    );
+
+    if (!hasMonetizationPlan) {
+      const selectedPlanTask = input.tasks.find(
+        (t) =>
+          t.status === "READY" &&
+          t.opportunity_id === selectedId &&
+          t.title.toLowerCase().includes("build monetization plan")
+      );
+      return {
+        opportunityId: selectedId,
+        action: "Build monetization plan",
+        reason: selectedPlanTask
+          ? "The verified winner is selected and its monetization plan is ready to be built."
+          : "The verified winner is already selected; continue with its first monetization plan.",
+        permission: "READ_ONLY",
+        status: "READY",
+      };
+    }
+
+    const outreachTask = input.tasks.find(
       (t) =>
         t.status === "READY" &&
         t.opportunity_id === selectedId &&
-        t.title.toLowerCase().includes("build monetization plan")
+        t.title.toLowerCase().includes("prepare outreach pack")
     );
+
     return {
       opportunityId: selectedId,
-      action: "Build monetization plan",
-      reason: selectedPlanTask
-        ? "The verified winner is selected and its monetization plan is ready to be built."
-        : "The verified winner is already selected; continue with its first monetization plan.",
+      action: "Prepare outreach pack",
+      reason: outreachTask
+        ? "The monetization plan exists and the owner has approved it; prepare the outreach pack before requesting approval to send."
+        : "The monetization plan already exists; continue to the safe outreach-preparation stage.",
       permission: "READ_ONLY",
       status: "READY",
     };
