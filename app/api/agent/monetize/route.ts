@@ -89,11 +89,7 @@ export async function POST(req: Request) {
       return acc;
     }, {demand:"UNVERIFIED",access:"UNVERIFIED",margin:"UNVERIFIED",repeatability:"UNVERIFIED",risk:"UNVERIFIED"});
 
-    const schema={type:"object",additionalProperties:false,properties:{
-      offer:{type:"string"},idealCustomer:{type:"string"},problemSolved:{type:"string"},deliverable:{type:"string"},
-      pricing:{type:"string"},acquisition:{type:"string"},firstPaidTest:{type:"string"},expectedCosts:{type:"string"},
-      risks:{type:"string"},successMetric:{type:"string"}
-    },required:["offer","idealCustomer","problemSolved","deliverable","pricing","acquisition","firstPaidTest","expectedCosts","risks","successMetric"]};
+    const schema={type:"object",additionalProperties:false,properties:{\n      offer:{type:"string"},idealCustomer:{type:"string"},problemSolved:{type:"string"},deliverable:{type:"string"},\n      pricing:{type:"string"},acquisition:{type:"string"},firstPaidTest:{type:"string"},expectedCosts:{type:"string"},\n      risks:{type:"string"},successMetric:{type:"string"},upfrontCost:{type:"number"},fundingRequired:{type:"boolean"},fundingReason:{type:"string"}\n    },required:["offer","idealCustomer","problemSolved","deliverable","pricing","acquisition","firstPaidTest","expectedCosts","risks","successMetric","upfrontCost","fundingRequired","fundingReason"]
     const prompt=[
       "Create a realistic first paid test from the validated business opportunity.",
       "Do not invent evidence or promise revenue. Keep the test zero or low cash.",
@@ -109,11 +105,16 @@ export async function POST(req: Request) {
       try { plan=JSON.parse(result.text); provider=result.provider; }
       catch { plan=null; }
     }
-    if (!plan) {
+    if (!plan || typeof plan.upfrontCost !== "number" || typeof plan.fundingRequired !== "boolean" || typeof plan.fundingReason !== "string") {
       plan = deterministicMonetizationPlan(opportunity, state);
       planningMode = "DETERMINISTIC_FALLBACK";
       provider = "DETERMINISTIC";
     }
+
+    const upfrontCost=Math.max(0,Number(plan.upfrontCost||0));
+    plan.upfrontCost=upfrontCost;
+    plan.fundingRequired=upfrontCost>0;
+    if(!plan.fundingReason) plan.fundingReason=upfrontCost>0 ? "The selected opportunity requires capital before execution." : "";
 
     const notes=Object.entries(plan).map(([k,v])=>k+": "+String(v)).join("\n");
     await supabaseRequest("evidence",{
@@ -129,6 +130,19 @@ export async function POST(req: Request) {
       }),
       headers:{"Prefer":"return=minimal"}
     });
+
+    if(upfrontCost>0){
+      await supabaseRequest("opportunities?id=eq."+encodeURIComponent(opportunityId),{
+        method:"PATCH",
+        body:JSON.stringify({status:"QUEUED_CAPITAL",next_action:"Waiting for bootstrap capital. Required upfront capital: R"+upfrontCost.toFixed(2)+". Reason: "+String(plan.fundingReason||"Capital required before execution.")}),
+        headers:{"Prefer":"return=minimal"}
+      });
+      const existingFunding=await supabaseRequest("funding_requests?opportunity_id=eq."+encodeURIComponent(opportunityId)+"&status=eq.QUEUED&select=*");
+      if(!Array.isArray(existingFunding)||existingFunding.length===0){
+        await supabaseRequest("funding_requests",{method:"POST",body:JSON.stringify({opportunity_id:opportunityId,requested_amount:upfrontCost,currency:"ZAR",reason:String(plan.fundingReason||"Capital required before execution."),status:"QUEUED",source:"BOOTSTRAP_CAPITAL"}),headers:{"Prefer":"return=minimal"}});
+      }
+      return NextResponse.json({ok:true,opportunityId,plan,planningMode,provider,capitalStatus:"QUEUED_CAPITAL",fundingRequired:true,nextAction:"Find legitimate zero-upfront bootstrap work while this business waits for capital."});
+    }
 
     const tasks=await supabaseRequest("tasks?opportunity_id=eq."+encodeURIComponent(opportunityId)+"&status=eq.READY&select=*");
     const planTask=Array.isArray(tasks)?tasks.find((t:any)=>String(t?.title||"").toLowerCase().includes("build monetization plan")):null;
