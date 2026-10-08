@@ -11,13 +11,29 @@ const empty:BootstrapData={configured:true,schemaReady:false,balances:{available
 
 export default function BootstrapPage(){
  const [data,setData]=useState<BootstrapData>(empty);
- const [loading,setLoading]=useState(true);\n const [running,setRunning]=useState(false);\n const [message,setMessage]=useState("");
+ const [loading,setLoading]=useState(true);
+ const [running,setRunning]=useState(false);
+ const [message,setMessage]=useState("");
  async function load(){
   try{const r=await fetch("/api/bootstrap",{cache:"no-store"});setData({...empty,...await r.json()});}
   catch{setData({...empty,error:"Bootstrap engine could not be reached."})}
   finally{setLoading(false)}
  }
- useEffect(()=>{load();const t=window.setInterval(load,3000);return()=>window.clearInterval(t)},[]);\n async function discoverAndVerify(){\n  setRunning(true);setMessage("");\n  try{\n   const d=await fetch("/api/bootstrap/discover",{method:"POST"});\n   const dj=await d.json();\n   if(!d.ok||!dj.ok) throw new Error(dj.error||"Discovery failed.");\n   const v=await fetch("/api/bootstrap/run",{method:"POST"});\n   const vj=await v.json();\n   if(!v.ok||!vj.ok) throw new Error(vj.error||"Verification failed.");\n   setMessage(`Discovery found ${dj.discovered||0} candidates; verified ${vj.verified||0}. No work was executed.`);\n   await load();\n  }catch(e){setMessage(e instanceof Error?e.message:"Bootstrap discovery failed.");}\n  finally{setRunning(false)}\n }
+ useEffect(()=>{load();const t=window.setInterval(load,3000);return()=>window.clearInterval(t)},[]);
+ async function discoverAndVerify(){
+  setRunning(true);setMessage("");
+  try{
+   const d=await fetch("/api/bootstrap/discover",{method:"POST"});
+   const dj=await d.json();
+   if(!d.ok||!dj.ok) throw new Error(dj.error||"Discovery failed.");
+   const v=await fetch("/api/bootstrap/run",{method:"POST"});
+   const vj=await v.json();
+   if(!v.ok||!vj.ok) throw new Error(vj.error||"Verification failed.");
+   setMessage(`Discovery found ${dj.discovered||0} candidates; verified ${vj.verified||0}. No work was executed.`);
+   await load();
+  }catch(e){setMessage(e instanceof Error?e.message:"Bootstrap discovery failed.");}
+  finally{setRunning(false)}
+ }
 
  return <main className="shell">
   <header className="top">
