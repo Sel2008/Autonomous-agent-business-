@@ -14,10 +14,6 @@ function readableError(value: unknown, fallback: string) {
   return fallback;
 }
 
-function taskIdFor(opportunityId: string) {
-  return opportunityId;
-}
-
 export async function POST(req: Request) {
   if (!authorized(req)) {
     return NextResponse.json({ ok:false, error:"Bootstrap worker is not authorized." }, { status:401 });
@@ -111,7 +107,7 @@ export async function POST(req: Request) {
     }
 
     const manual = await supabaseRequest(
-      "bootstrap_opportunities?status=eq.VERIFIED&select=id,title,provider,execution_mode"
+      "bootstrap_opportunities?status=eq.VERIFIED&select=id,title,provider"
     ).catch(()=>[]);
 
     return NextResponse.json({
