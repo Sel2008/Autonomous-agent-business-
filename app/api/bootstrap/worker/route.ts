@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { supabaseConfigured, supabaseRequest } from "../../../../lib/supabase";
 import { BOOTSTRAP_PROVIDERS } from "../../../../lib/bootstrap/providers";
+import { adapterFor } from "../../../../lib/bootstrap/execution";
+import type { BootstrapOpportunity } from "../../../../lib/bootstrap/types";
 import { verifyOpportunity, applyVerification } from "../../../../lib/bootstrap/verification";
 
 function authorized(req: Request) {
@@ -106,6 +108,106 @@ export async function POST(req: Request) {
       if (Array.isArray(task) && task[0]?.id) queued.push(String(task[0].id));
     }
 
+    // Execute only through an explicitly registered provider adapter.
+    // Discovery/verification status alone can never trigger external work.
+    const executionCandidates = await supabaseRequest(
+      "bootstrap_tasks?status=eq.READY&select=*,bootstrap_opportunities(*)&order=created_at.asc"
+    ).catch(()=>[]);
+    const executionResults:any[] = [];
+
+    for (const task of Array.isArray(executionCandidates) ? executionCandidates : []) {
+      const op = task?.bootstrap_opportunities as BootstrapOpportunity | undefined;
+      if (!op) continue;
+
+      const adapter = adapterFor(op);
+      if (!adapter || !op.automation_allowed || op.status !== "READY") {
+        executionResults.push({
+          taskId:String(task.id),
+          status:"NOT_EXECUTED",
+          reason: !adapter
+            ? "No explicit provider execution adapter is installed."
+            : !op.automation_allowed
+              ? "Provider automation permission is not verified."
+              : "Opportunity is not autonomous-ready."
+        });
+        continue;
+      }
+
+      try {
+        await supabaseRequest("bootstrap_tasks?id=eq."+encodeURIComponent(String(task.id)), {
+          method:"PATCH",
+          body:JSON.stringify({status:"IN_PROGRESS",started_at:new Date().toISOString()}),
+          headers:{"Prefer":"return=minimal"}
+        });
+
+        const result = await adapter.execute(op);
+
+        if (!result.ok) {
+          const blockedStatus = result.status==="BLOCKED" ? "BLOCKED" : "FAILED";
+          await supabaseRequest("bootstrap_tasks?id=eq."+encodeURIComponent(String(task.id)), {
+            method:"PATCH",
+            body:JSON.stringify({status:blockedStatus,notes:result.reason}),
+            headers:{"Prefer":"return=minimal"}
+          });
+          executionResults.push({taskId:String(task.id),status:result.status,reason:result.reason});
+          continue;
+        }
+
+        const nextStatus = result.status==="PENDING_PAYOUT" ? "PENDING_PAYOUT" : result.status==="SUBMITTED" ? "SUBMITTED" : "IN_PROGRESS";
+        await supabaseRequest("bootstrap_tasks?id=eq."+encodeURIComponent(String(task.id)), {
+          method:"PATCH",
+          body:JSON.stringify({
+            status:nextStatus,
+            external_task_id:result.externalTaskId || String(task.external_task_id||""),
+            ...(typeof result.grossAmount==="number" ? {gross_amount:result.grossAmount} : {}),
+            ...(result.currency ? {currency:result.currency} : {}),
+            notes:result.notes || ""
+          }),
+          headers:{"Prefer":"return=minimal"}
+        });
+        executionResults.push({taskId:String(task.id),status:result.status,externalTaskId:result.externalTaskId||null});
+      } catch (error) {
+        await supabaseRequest("bootstrap_tasks?id=eq."+encodeURIComponent(String(task.id)), {
+          method:"PATCH",
+          body:JSON.stringify({status:"FAILED",notes:readableError(error,"Provider execution failed.")}),
+          headers:{"Prefer":"return=minimal"}
+        }).catch(()=>{});
+        executionResults.push({taskId:String(task.id),status:"FAILED",reason:readableError(error,"Provider execution failed.")});
+      }
+    }
+
+    // Earnings are recorded only from an explicit PAID task. A provider adapter
+    // must first establish the real external payout before this ledger entry.
+    const paidTasks = await supabaseRequest(
+      "bootstrap_tasks?status=eq.PAID&payout_status=eq.PAID&select=*"
+    ).catch(()=>[]);
+    let earningsRecorded=0;
+
+    for (const task of Array.isArray(paidTasks) ? paidTasks : []) {
+      const existing = await supabaseRequest(
+        "capital_transactions?source_task_id=eq."+encodeURIComponent(String(task.id))+"&kind=eq.EARNING&select=id&limit=1"
+      ).catch(()=>[]);
+      if (Array.isArray(existing) && existing.length) continue;
+
+      const amount=Number(task.net_amount||0);
+      if (!Number.isFinite(amount) || amount<=0) continue;
+
+      await supabaseRequest("capital_transactions", {
+        method:"POST",
+        body:JSON.stringify({
+          kind:"EARNING",
+          amount,
+          currency:String(task.currency||"ZAR"),
+          status:"CONFIRMED",
+          reference:String(task.external_task_id||task.id),
+          source_task_id:String(task.id),
+          notes:"Confirmed bootstrap payout recorded by provider execution adapter."
+        }),
+        headers:{"Prefer":"return=minimal"}
+      });
+      earningsRecorded += 1;
+    }
+
     const manual = await supabaseRequest(
       "bootstrap_opportunities?status=eq.VERIFIED&select=id,title,provider"
     ).catch(()=>[]);
@@ -122,8 +224,10 @@ export async function POST(req: Request) {
       verificationErrors,
       execution:{
         autonomousReadyQueued:queued.length,
-        earningsRecorded:0,
-        note:"No earnings are recorded until a real provider task is completed and its payout is confirmed."
+        tasksAttempted:executionResults.filter(x=>["IN_PROGRESS","SUBMITTED","PENDING_PAYOUT"].includes(String(x.status))).length,
+        earningsRecorded,
+        results:executionResults,
+        note:"Only explicitly registered provider adapters can execute work. Earnings enter the capital ledger only after a real task reaches PAID/PENDING payout confirmation."
       }
     });
   } catch (error) {
