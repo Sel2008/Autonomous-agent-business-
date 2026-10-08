@@ -38,7 +38,7 @@ export async function GET(){
    configured:true,schemaReady:true,
    balances:{available,pending,withdrawable,totalEarned,today,week},
    activeTasks:(Array.isArray(tasks)?tasks:[]).filter((x:any)=>["READY","IN_PROGRESS","SUBMITTED","PENDING_PAYOUT"].includes(String(x.status))),
-   opportunities:opportunityRows.filter((x:any)=>["VERIFIED","READY","ACTIVE"].includes(String(x.status))),
+   opportunities:opportunityRows.filter((x:any)=>["DISCOVERED","VERIFIED","READY","ACTIVE","PAUSED"].includes(String(x.status))),
    fundingRequests:requestRows.map((x:any)=>({...x,opportunity_name:oppMap.get(String(x.opportunity_id))?.name||x.opportunity_id})),
    accounts:accts,safety
   });
