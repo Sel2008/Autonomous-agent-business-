@@ -72,6 +72,7 @@ export async function POST(req: Request) {
 
     const verificationById = new Map(verification.map((row:any)=>[String(row?.opportunity_id||""),row]));
     const verifiedCandidates = candidatesForRun
+      .filter((op:any)=>!["QUEUED_CAPITAL","REJECTED","BLOCKED"].includes(String(op?.status||"").toUpperCase()))
       .filter((op:any)=>fullyVerified(verificationById.get(String(op.id))))
       .map((op:any)=>{
         const research = Array.isArray(researchCandidates)
