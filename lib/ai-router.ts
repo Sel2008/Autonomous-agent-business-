@@ -27,7 +27,18 @@ function extractOpenAIText(data:any): string {
   return "";
 }
 
-function geminiSchema(schema:any):any {\n  if(!schema || typeof schema!=="object") return schema;\n  if(Array.isArray(schema)) return schema.map(geminiSchema);\n  const out:any={};\n  for(const [key,value] of Object.entries(schema)) {\n    if(key==="additionalProperties") continue;\n    out[key]=geminiSchema(value);\n  }\n  return out;\n}\n\nasync function callGemini(p:any, apiKey:string, input:RunAIInput):Promise<string> {
+function geminiSchema(schema:any):any {
+  if(!schema || typeof schema!=="object") return schema;
+  if(Array.isArray(schema)) return schema.map(geminiSchema);
+  const out:any={};
+  for(const [key,value] of Object.entries(schema)) {
+    if(key==="additionalProperties") continue;
+    out[key]=geminiSchema(value);
+  }
+  return out;
+}
+
+async function callGemini(p:any, apiKey:string, input:RunAIInput):Promise<string> {
   const response = await fetch(
     "https://generativelanguage.googleapis.com/v1beta/models/"+encodeURIComponent(p.model)+":generateContent?key="+encodeURIComponent(apiKey),
     {
