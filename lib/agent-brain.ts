@@ -48,7 +48,7 @@ export async function askOpportunitySelection(input: {
   evidence: any[];
 }): Promise<{ opportunityId: string; reason: string } | null> {
   const candidates = input.opportunities
-    .filter((op:any) => input.verification[String(op?.id || "")])
+    .filter((op:any) => input.verification[String(op?.id || "")] && !["QUEUED_CAPITAL","REJECTED","BLOCKED"].includes(String(op?.status || "").toUpperCase()))
     .map((op:any) => ({
       opportunity: op,
       verification: input.verification[String(op.id)],
@@ -59,6 +59,7 @@ export async function askOpportunitySelection(input: {
   const prompt=[
     "You are the selection brain of an autonomous business agent.",
     "All supplied candidates have completed every required verification dimension.",
+    "Skip opportunities already QUEUED_CAPITAL, REJECTED, or BLOCKED; they must not displace a viable zero-capital candidate.",
     "Choose exactly ONE candidate for the first monetization test.",
     "Compare the complete set. Prefer stronger and more independent evidence, clearer customer demand, credible customer access, better economics/margin, repeatability, and lower documented risk.",
     "Do not invent facts, scores, revenue, customers, or evidence. If evidence is uncertain, say so in the reason but still choose the strongest candidate.",
