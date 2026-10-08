@@ -74,9 +74,17 @@ export async function runBusinessAI(input:RunAIInput):Promise<RunAIResult|null> 
     const apiKey=process.env[p.key];
     if(!apiKey) continue;
     try {
-      const text = p.name==="GEMINI"
+      let text = p.name==="GEMINI"
         ? await callGemini(p,apiKey,input)
         : await callOpenAICompatible(p,apiKey,input);
+      // Some free OpenAI-compatible providers reject strict json_schema response_format.
+      // Retry without provider-specific structured-output enforcement; the prompt still
+      // requires JSON and the caller validates/parses the result.
+      if(!text && input.schema){
+        text = p.name==="GEMINI"
+          ? await callGemini(p,apiKey,{...input,schema:undefined})
+          : await callOpenAICompatible(p,apiKey,{...input,schema:undefined});
+      }
       if(text) return {text,provider:p.name,model:p.model};
     } catch {
       // A provider failure is expected in a free-tier failover chain.
