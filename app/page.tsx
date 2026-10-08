@@ -122,23 +122,36 @@ export default function Home(){
    </button>
   </section>
 
-  {pendingApproval&&<section id="owner-approval" className="section card" style={{border:"1px solid rgba(130,210,255,.45)"}}>
-   <div className="eyebrow">OWNER APPROVAL REQUIRED</div>
-   <h2 style={{marginBottom:8}}>{pendingApproval.title}</h2>
-   <p className="muted">The agent has completed its safe preparation and is paused. Review exactly what will happen next before allowing it to continue.</p>
-   {monetizationApproval&&winnerOpportunity&&winnerPlanEvidence&&<div className="card" style={{marginTop:16,background:"rgba(255,255,255,.025)"}}>
-    <div className="eyebrow">MONETIZATION PLAN READY FOR YOUR DECISION</div>
-    <h3 style={{margin:"8px 0"}}>{winnerOpportunity.name}</h3>
-    <div className="grid two" style={{marginTop:12}}>
-     {Object.entries(planLabels).map(([key,label])=>winnerPlan[key]?<div key={key} style={{padding:"10px 0"}}><div className="muted">{label}</div><div>{winnerPlan[key]}</div></div>:null)}
+  {pendingApproval && (
+   <section id="owner-approval" className="section card" style={{border:"1px solid rgba(130,210,255,.45)"}}>
+    <div className="eyebrow">OWNER APPROVAL REQUIRED</div>
+    <h2 style={{marginBottom:8}}>{pendingApproval.title}</h2>
+    <p className="muted">The agent has completed its safe preparation and is paused. Review exactly what will happen next before allowing it to continue.</p>
+    {monetizationApproval && winnerOpportunity && winnerPlanEvidence ? (
+     <div className="card" style={{marginTop:16,background:"rgba(255,255,255,.025)"}}>
+      <div className="eyebrow">MONETIZATION PLAN READY FOR YOUR DECISION</div>
+      <h3 style={{margin:"8px 0"}}>{winnerOpportunity.name}</h3>
+      <div className="grid two" style={{marginTop:12}}>
+       <div><div className="muted">Offer</div><div>{winnerPlan.offer}</div></div>
+       <div><div className="muted">Ideal customer</div><div>{winnerPlan.idealCustomer}</div></div>
+       <div><div className="muted">Problem solved</div><div>{winnerPlan.problemSolved}</div></div>
+       <div><div className="muted">Deliverable</div><div>{winnerPlan.deliverable}</div></div>
+       <div><div className="muted">Pricing test</div><div>{winnerPlan.pricing}</div></div>
+       <div><div className="muted">Customer acquisition</div><div>{winnerPlan.acquisition}</div></div>
+       <div><div className="muted">First paid test</div><div>{winnerPlan.firstPaidTest}</div></div>
+       <div><div className="muted">Expected cash cost</div><div>{winnerPlan.expectedCosts}</div></div>
+       <div><div className="muted">Risks</div><div>{winnerPlan.risks}</div></div>
+       <div><div className="muted">Success metric</div><div>{winnerPlan.successMetric}</div></div>
+      </div>
+     </div>
+    ) : null}
+    <div className="actions" style={{marginTop:16}}>
+     <button className="button" onClick={()=>decideApproval(pendingApproval.id,"APPROVED")}>Approve &amp; let agent continue</button>
+     <button className="small-button" onClick={()=>decideApproval(pendingApproval.id,"REJECTED")}>Reject / stop this test</button>
     </div>
-   </div>}
-   <div className="actions" style={{marginTop:16}}>
-    <button className="button" onClick={()=>decideApproval(pendingApproval.id,"APPROVED")}>Approve & let agent continue</button>
-    <button className="small-button" onClick={()=>decideApproval(pendingApproval.id,"REJECTED")}>Reject / stop this test</button>
-   </div>
-   <div className="muted" style={{marginTop:10}}>Approval is required only for the consequential step. Research and internal preparation remain agent-managed.</div>
-  </section>
+    <div className="muted" style={{marginTop:10}}>Approval is required only for the consequential step. Research and internal preparation remain agent-managed.</div>
+   </section>
+  )}
 
   <section className="section card">
    <div className="eyebrow">AGENT ACTIVITY</div><h2>What the agent is doing</h2>
