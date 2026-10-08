@@ -52,7 +52,7 @@ export default function ApprovalsPage(){
   if(!approval)return;
   setBusy(true); setMessage("");
   try{
-   const r=await fetch("/api/ledger",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"approval-decide",payload:{id:approval.id,status}})});
+   const r=await fetch("/api/ledger",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"approval-decide",payload:{id:approval.id,status,opportunityId:opportunity?.id}})});
    const result=await r.json().catch(()=>({}));
    if(!r.ok||result.ok===false) throw new Error(result.error||"Approval decision failed");
    setApproval({...approval,status});
