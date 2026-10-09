@@ -57,7 +57,7 @@ export async function POST(req: Request) {
     for (const op of Array.isArray(candidates) ? candidates : []) {
       try {
         const result = await verifyOpportunity(op);
-        if (!result.ok) {
+        if (result.ok === false) {
           verificationErrors.push({id:op.id,error:result.error});
           continue;
         }
