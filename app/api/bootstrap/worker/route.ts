@@ -281,11 +281,21 @@ export async function POST(req: Request) {
       }
 
       try {
-        await supabaseRequest("bootstrap_tasks?id=eq."+encodeURIComponent(String(task.id)), {
-          method:"PATCH",
-          body:JSON.stringify({status:"IN_PROGRESS",started_at:new Date().toISOString()}),
-          headers:{"Prefer":"return=minimal"}
+        // Claim atomically in Postgres before calling the external provider.
+        // If another heartbeat already claimed this task, do not execute it again.
+        const claim = await supabaseRequest("rpc/claim_bootstrap_task", {
+          method:"POST",
+          body:JSON.stringify({p_task_id:String(task.id)}),
+          headers:{"Prefer":"return=representation"}
         });
+        if (!claim || typeof claim !== "object" || Array.isArray(claim) || claim.claimed !== true) {
+          executionResults.push({
+            taskId:String(task.id),
+            status:"NOT_EXECUTED",
+            reason:String(claim?.reason || "Task was already claimed by another worker.")
+          });
+          continue;
+        }
 
         const result = await adapter.execute(op);
 
