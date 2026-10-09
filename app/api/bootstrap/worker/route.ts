@@ -90,59 +90,55 @@ async function resumeApprovedFundedOpportunities() {
 }
 
 async function reconcileFundingRequests() {
-  const [accountsResult, requestsResult] = await Promise.all([
-    supabaseRequest("capital_accounts?select=*").catch(() => []),
-    supabaseRequest("funding_requests?status=in.(QUEUED,FUNDED)&order=created_at.asc&select=*").catch(() => [])
-  ]);
-  const accounts = Array.isArray(accountsResult) ? accountsResult : [];
-  const requests = Array.isArray(requestsResult) ? requestsResult : [];
-  const availableZar = accounts
-    .filter((account:any) => String(account?.currency || "ZAR").toUpperCase() === "ZAR")
-    .reduce((sum:number, account:any) => {
-      const balance = Number(account?.balance);
-      return sum + (Number.isFinite(balance) && balance > 0 ? balance : 0);
-    }, 0);
-
-  // Existing reservations consume available funds first, preventing two queued
-  // opportunities from claiming the same balance on later heartbeat runs.
-  let reserved = requests
-    .filter((request:any) => String(request?.status || "") === "FUNDED" && String(request?.currency || "ZAR").toUpperCase() === "ZAR")
-    .reduce((sum:number, request:any) => {
-      const amount = Number(request?.requested_amount);
-      return sum + (Number.isFinite(amount) && amount > 0 ? amount : 0);
-    }, 0);
-
-  const newlyFunded:string[] = [];
-  for (const request of requests) {
-    if (String(request?.status || "") !== "QUEUED") continue;
-    if (String(request?.currency || "ZAR").toUpperCase() !== "ZAR") continue;
-    const amount = Number(request?.requested_amount);
-    if (!Number.isFinite(amount) || amount <= 0) continue;
-    if (reserved + amount > availableZar) continue;
-
-    const id = String(request?.id || "");
-    if (!id) continue;
-    await supabaseRequest("funding_requests?id=eq." + encodeURIComponent(id), {
-      method:"PATCH",
-      body:JSON.stringify({
-        status:"FUNDED",
-        reason:String(request?.reason || "") + " [Capital reserved from confirmed ZAR account balance; no transfer or spend performed.]"
-      }),
-      headers:{"Prefer":"return=minimal"}
+  // Reservation must be atomic in Postgres. If the migration is not installed,
+  // fail closed for new reservations rather than risk allocating the same balance twice.
+  let atomicResult:any=null;
+  let reservationError="";
+  try {
+    atomicResult=await supabaseRequest("rpc/reserve_queued_funding_requests",{
+      method:"POST",
+      body:JSON.stringify({}),
+      headers:{"Prefer":"return=representation"}
     });
-    reserved += amount;
-    newlyFunded.push(id);
+  } catch(error) {
+    reservationError=readableError(error,"Atomic funding reservation RPC is unavailable.");
   }
+
+  const [accountsResult,requestsResult]=await Promise.all([
+    supabaseRequest("capital_accounts?select=*").catch(()=>[]),
+    supabaseRequest("funding_requests?status=in.(QUEUED,FUNDED)&order=created_at.asc&select=*").catch(()=>[])
+  ]);
+  const accounts=Array.isArray(accountsResult)?accountsResult:[];
+  const requests=Array.isArray(requestsResult)?requestsResult:[];
+  const availableZar=accounts
+    .filter((account:any)=>String(account?.currency||"ZAR").toUpperCase()==="ZAR")
+    .reduce((sum:number,account:any)=>{
+      const balance=Number(account?.balance);
+      return sum+(Number.isFinite(balance)&&balance>0?balance:0);
+    },0);
+  const currentReserved=requests
+    .filter((request:any)=>String(request?.status||"")==="FUNDED"&&String(request?.currency||"ZAR").toUpperCase()==="ZAR")
+    .reduce((sum:number,request:any)=>{
+      const amount=Number(request?.requested_amount);
+      return sum+(Number.isFinite(amount)&&amount>0?amount:0);
+    },0);
 
   for(const request of requests.filter((item:any)=>String(item?.status||"")==="FUNDED")) {
     await ensureFundingResumeApproval(request).catch(()=>null);
   }
 
+  const result=atomicResult&&typeof atomicResult==="object"&&!Array.isArray(atomicResult)
+    ? atomicResult
+    : {};
   return {
-    availableZar,
-    reservedZar:reserved,
-    newlyReservedRequests:newlyFunded,
-    note:"FUNDED means internally reserved only. Opportunities remain queued until the separate resume workflow is implemented; no money is moved or spent."
+    availableZar:Number(result.availableZar??availableZar),
+    reservedZar:Number(result.reservedZar??currentReserved),
+    newlyReservedRequests:Array.isArray(result.newlyReservedRequests)?result.newlyReservedRequests:[],
+    reservationReady:!reservationError,
+    ...(reservationError?{reservationError}:{}),
+    note:reservationError
+      ?"New capital reservations are paused because the atomic database reservation migration is not available. Existing funded requests remain visible; no unsafe fallback reservation was attempted."
+      :"Reservations were serialized in the database. FUNDED means internal reservation only; it does not transfer or spend money."
   };
 }
 
@@ -220,9 +216,12 @@ export async function POST(req: Request) {
     const queued:string[] = [];
 
     for (const op of Array.isArray(ready) ? ready : []) {
+      // One durable work slot per opportunity, including terminal failures.
+      // This prevents every heartbeat from silently creating duplicate work
+      // after a provider failure. Retries must be an explicit, auditable action.
       const existing = await supabaseRequest(
         "bootstrap_tasks?opportunity_id=eq." + encodeURIComponent(String(op.id)) +
-        "&status=in.(READY,IN_PROGRESS,SUBMITTED,PENDING_PAYOUT)&select=id&limit=1"
+        "&select=id,status&limit=1"
       ).catch(()=>[]);
 
       if (Array.isArray(existing) && existing.length) continue;
