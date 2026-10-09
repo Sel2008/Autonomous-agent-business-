@@ -162,6 +162,13 @@ export async function POST(req: Request) {
 
   try {
     const fundingReconciliation = await reconcileFundingRequests();
+    // Recover claims that exceeded the safe stale window. This marks them FAILED
+    // for human/provider reconciliation; it deliberately does not retry uncertain work.
+    const staleClaimRecovery = await supabaseRequest("rpc/expire_stale_bootstrap_claims", {
+      method:"POST",
+      body:JSON.stringify({p_stale_minutes:120}),
+      headers:{"Prefer":"return=representation"}
+    }).catch((error:any) => ({ok:false, expiredCount:0, reason:readableError(error,"Stale claim recovery RPC failed.")}));
     const fundingResumption = await resumeApprovedFundedOpportunities();
     const discovered:any[] = [];
     const discoveryErrors:string[] = [];
@@ -354,6 +361,7 @@ export async function POST(req: Request) {
       ok:true,
       worker:"bootstrap-funding-heartbeat",
       fundingReconciliation,
+      staleClaimRecovery,
       fundingResumption,
       discovered:discovered.length,
       verified:verified.length,
