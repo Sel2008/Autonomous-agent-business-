@@ -142,7 +142,7 @@ export async function POST(req: Request) {
 
         const result = await adapter.execute(op);
 
-        if (!result.ok) {
+        if ("reason" in result) {
           const blockedStatus = result.status==="BLOCKED" ? "BLOCKED" : "FAILED";
           await supabaseRequest("bootstrap_tasks?id=eq."+encodeURIComponent(String(task.id)), {
             method:"PATCH",
