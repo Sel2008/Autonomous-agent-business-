@@ -47,7 +47,7 @@ export async function POST(req:Request){
       const title=String(approval.title||"");
       if(!title.startsWith(PREFIX+": ") || !title.includes("[opportunity:")) return fail("This is not a bootstrap permission request.",403);
       if(String(approval.status)!=="PENDING") return fail("This request has already been decided.",409);
-      const match=title.match(/\\[opportunity:([^\\]]+)\\]$/);
+      const match=title.match(/\[opportunity:([^\]]+)\]$/);
       const opportunityId=match?.[1];
       if(!opportunityId) return fail("The request is missing its opportunity reference.",400);
       const opRows=await supabaseRequest("bootstrap_opportunities?id=eq."+encodeURIComponent(opportunityId)+"&select=*");
