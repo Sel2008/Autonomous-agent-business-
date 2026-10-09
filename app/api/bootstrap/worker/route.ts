@@ -33,7 +33,23 @@ async function ensureFundingResumeApproval(request:any) {
   return Array.isArray(created)?created[0]||null:null;
 }
 
-async function resumeApprovedFundedOpportunities() {
+async function resumeApprovedFundedOpportunities(reservationReconciliation:any) {
+  if(!reservationReconciliation?.reservationReady) {
+    return {resumedOpportunityIds:[],waitingOpportunityIds:[],note:"Resumption is paused until atomic funding reservation is available."};
+  }
+  const [accountsForResume,allFundedResult]=await Promise.all([
+    supabaseRequest("capital_accounts?select=*").catch(()=>[]),
+    supabaseRequest("funding_requests?status=eq.FUNDED&order=created_at.asc&select=*").catch(()=>[])
+  ]);
+  const confirmedBalance=(Array.isArray(accountsForResume)?accountsForResume:[])
+    .filter((account:any)=>String(account?.currency||"ZAR").toUpperCase()==="ZAR"&&account?.connected===true&&account?.owner_approved===true)
+    .reduce((sum:number,account:any)=>{const n=Number(account?.balance);return sum+(Number.isFinite(n)&&n>0?n:0);},0);
+  const totalReserved=(Array.isArray(allFundedResult)?allFundedResult:[])
+    .filter((request:any)=>String(request?.currency||"ZAR").toUpperCase()==="ZAR")
+    .reduce((sum:number,request:any)=>{const n=Number(request?.requested_amount);return sum+(Number.isFinite(n)&&n>0?n:0);},0);
+  if(totalReserved>confirmedBalance) {
+    return {resumedOpportunityIds:[],waitingOpportunityIds:[],note:"Resumption is paused because currently confirmed, owner-approved ZAR balances do not cover all existing reservations."};
+  }
   const requestsResult=await supabaseRequest("funding_requests?status=eq.FUNDED&order=created_at.asc&select=*").catch(()=>[]);
   const requests=Array.isArray(requestsResult)?requestsResult:[];
   const resumed:string[]=[];
@@ -103,6 +119,9 @@ async function reconcileFundingRequests() {
   } catch(error) {
     reservationError=readableError(error,"Atomic funding reservation RPC is unavailable.");
   }
+  if(!reservationError && (!atomicResult || typeof atomicResult!=="object" || Array.isArray(atomicResult) || !Number.isFinite(Number(atomicResult.availableZar)))) {
+    reservationError="Atomic funding reservation RPC returned an unexpected result.";
+  }
 
   const [accountsResult,requestsResult]=await Promise.all([
     supabaseRequest("capital_accounts?select=*").catch(()=>[]),
@@ -111,7 +130,7 @@ async function reconcileFundingRequests() {
   const accounts=Array.isArray(accountsResult)?accountsResult:[];
   const requests=Array.isArray(requestsResult)?requestsResult:[];
   const availableZar=accounts
-    .filter((account:any)=>String(account?.currency||"ZAR").toUpperCase()==="ZAR")
+    .filter((account:any)=>String(account?.currency||"ZAR").toUpperCase()==="ZAR"&&account?.connected===true&&account?.owner_approved===true)
     .reduce((sum:number,account:any)=>{
       const balance=Number(account?.balance);
       return sum+(Number.isFinite(balance)&&balance>0?balance:0);
@@ -158,7 +177,7 @@ export async function POST(req: Request) {
 
   try {
     const fundingReconciliation = await reconcileFundingRequests();
-    const fundingResumption = await resumeApprovedFundedOpportunities();
+    const fundingResumption = await resumeApprovedFundedOpportunities(fundingReconciliation);
     const discovered:any[] = [];
     const discoveryErrors:string[] = [];
 
