@@ -341,28 +341,26 @@ export async function POST(req: Request) {
     let earningsRecorded=0;
 
     for (const task of Array.isArray(paidTasks) ? paidTasks : []) {
-      const existing = await supabaseRequest(
-        "capital_transactions?source_task_id=eq."+encodeURIComponent(String(task.id))+"&kind=eq.EARNING&select=id&limit=1"
-      ).catch(()=>[]);
-      if (Array.isArray(existing) && existing.length) continue;
-
-      const amount=Number(task.net_amount||0);
-      if (!Number.isFinite(amount) || amount<=0) continue;
-
-      await supabaseRequest("capital_transactions", {
-        method:"POST",
-        body:JSON.stringify({
-          kind:"EARNING",
-          amount,
-          currency:String(task.currency||"ZAR"),
-          status:"CONFIRMED",
-          reference:String(task.external_task_id||task.id),
-          source_task_id:String(task.id),
-          notes:"Confirmed bootstrap payout recorded by provider execution adapter."
-        }),
-        headers:{"Prefer":"return=minimal"}
-      });
-      earningsRecorded += 1;
+      // The database RPC serializes ledger writes per task. A read-then-insert
+      // check here would double-credit if two heartbeats processed the same payout.
+      try {
+        const recorded = await supabaseRequest("rpc/record_bootstrap_paid_earning", {
+          method:"POST",
+          body:JSON.stringify({p_task_id:String(task.id)}),
+          headers:{"Prefer":"return=representation"}
+        });
+        if (recorded && typeof recorded === "object" && !Array.isArray(recorded) && recorded.recorded === true) {
+          earningsRecorded += 1;
+        }
+      } catch (error) {
+        // Fail closed: a missing migration or ledger error must never trigger a
+        // non-atomic fallback insert from application code.
+        taskQueueErrors.push({
+          opportunityId:String(task.opportunity_id||""),
+          taskId:String(task.id),
+          error:"Paid earning was not recorded; atomic ledger RPC failed: "+readableError(error,"unknown error")
+        });
+      }
     }
 
     const manual = await supabaseRequest(
