@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-type Approval={id:string;title:string;tier:"T1"|"T2"|"T3";status:"PENDING"|"APPROVED"|"REJECTED"};
+type Approval={id:string;title:string;tier:"T1"|"T2"|"T3";status:"PENDING"|"APPROVED"|"REJECTED";reason?:string};
 type Opportunity={id:string;name:string;status:string};
 
 function parsePlanNotes(notes:string){
@@ -28,13 +28,14 @@ export default function ApprovalsPage(){
  const [loading,setLoading]=useState(true);
  const [message,setMessage]=useState("");
  const [busy,setBusy]=useState(false);
+ const isFundingResume=String(approval?.title||"").startsWith("Approve funded opportunity resumption:");
 
  async function load(){
   setLoading(true);
   try{
    const r=await fetch("/api/ledger",{cache:"no-store"});
    const ledger=await r.json();
-   const pending=(Array.isArray(ledger.approvals)?ledger.approvals:[]).find((a:any)=>a.status==="PENDING")||null;
+   const pending=(Array.isArray(ledger.approvals)?ledger.approvals:[]).find((a:any)=>a.status==="PENDING"&&!String(a.title||"").startsWith("Bootstrap permission review:"))||null;
    setApproval(pending);
    const opps=Array.isArray(ledger.opportunities)?ledger.opportunities:[];
    const winner=opps.find((o:any)=>String(o.status||"").toUpperCase()==="SELECTED")||null;
@@ -52,11 +53,11 @@ export default function ApprovalsPage(){
   if(!approval)return;
   setBusy(true); setMessage("");
   try{
-   const r=await fetch("/api/ledger",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"approval-decide",payload:{id:approval.id,status,opportunityId:opportunity?.id}})});
+   const r=await fetch("/api/ledger",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"approval-decide",payload:{id:approval.id,status,...(isFundingResume?{}:{opportunityId:opportunity?.id})}})});
    const result=await r.json().catch(()=>({}));
    if(!r.ok||result.ok===false) throw new Error(result.error||"Approval decision failed");
    setApproval({...approval,status});
-   setMessage(status==="APPROVED"?"Approved. The agent may continue to the next stage.":"Rejected. The agent will remain stopped on this test.");
+   setMessage(isFundingResume?(status==="APPROVED"?"Resumption approved. The next worker heartbeat will re-check funding, verification, and whether another opportunity is selected.":"Resumption rejected. The funded opportunity will remain queued."):(status==="APPROVED"?"Approved. The agent may continue to the next stage.":"Rejected. The agent will remain stopped on this test."));
   }catch(e){setMessage(e instanceof Error?e.message:"Approval decision failed.");}
   finally{setBusy(false)}
  }
@@ -79,9 +80,9 @@ export default function ApprovalsPage(){
     <div className="eyebrow">DECISION REQUIRED</div>
     <h2>{approval.title}</h2>
     <div className="muted">{approval.tier} · {approval.status}</div>
-    <div className="notice" style={{marginTop:16}}><strong>Owner boundary:</strong> approving this allows the agent to move beyond the current approval gate. Review the plan below before deciding.</div>
+    <div className="notice" style={{marginTop:16}}><strong>Owner boundary:</strong> {isFundingResume?"This approval only allows the Business Brain to resume non-sending planning/preparation for an opportunity whose required ZAR capital has been internally reserved. It does not authorize a purchase, transfer, spending, or outreach sending.":"Approving this allows the agent to move beyond the current approval gate. Review the plan below before deciding."}</div>
 
-    {opportunity&&<div className="card" style={{marginTop:20}}>
+    {!isFundingResume&&opportunity&&<div className="card" style={{marginTop:20}}>
      <div className="eyebrow">MONETIZATION PLAN</div>
      <h3 style={{margin:"8px 0 18px"}}>{opportunity.name}</h3>
      <div className="grid two">
@@ -95,7 +96,7 @@ export default function ApprovalsPage(){
      <button className="button" disabled={busy} onClick={()=>decide("APPROVED")}>{busy?"Saving…":"Approve & let agent continue"}</button>
      <button className="small-button" disabled={busy} onClick={()=>decide("REJECTED")}>Reject / stop this test</button>
     </div>}
-    <p className="muted" style={{marginTop:14}}>You are approving the next consequential step, not manually performing the agent's research or preparation.</p>
+    <p className="muted" style={{marginTop:14}}>{isFundingResume?"The worker still checks the funding reservation and all five verification dimensions. Outreach sending and any actual spending remain separate guarded actions.":"You are approving the next consequential step, not manually performing the agent's research or preparation."}</p>
    </section>
   }
  </main>
