@@ -121,14 +121,22 @@ export async function POST(req: Request) {
 
     const reason = aiSelection?.reason || "Selected by deterministic fallback using research priority, confidence and evidence quality.";
     for (const op of candidatesForRun) {
-      const isWinner=String(op.id)===winnerId;
-      await supabaseRequest("opportunities?id=eq."+encodeURIComponent(String(op.id)),{
+      const opportunityId=String(op.id);
+      const currentStatus=String(op?.status||"").toUpperCase();
+      const isWinner=opportunityId===winnerId;
+
+      // A deferred opportunity must stay deferred when the brain selects the
+      // next candidate. Never silently reset funding, rejection, or blocked
+      // states just because another winner is being selected.
+      if (!isWinner && ["QUEUED_CAPITAL","REJECTED","BLOCKED"].includes(currentStatus)) continue;
+
+      await supabaseRequest("opportunities?id=eq."+encodeURIComponent(opportunityId),{
         method:"PATCH",
         body:JSON.stringify({
           status:isWinner ? "SELECTED" : "VERIFIED",
           next_action:isWinner
             ? "Build monetization plan. Selection rationale: " + reason
-            : "Verified candidate; not selected for the first monetization test."
+            : "Verified candidate; not selected for the current monetization test."
         }),
         headers:{"Prefer":"return=minimal"}
       });
