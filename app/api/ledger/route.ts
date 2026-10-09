@@ -61,8 +61,24 @@ export async function POST(req: Request) {
     } else if (action === "approval-create") {
       result = await supabaseRequest("approvals", { method:"POST", body:JSON.stringify(payload) });
     } else if (action === "approval-decide") {
-      result = await supabaseRequest("approvals?id=eq."+encodeURIComponent(payload.id), { method:"PATCH", body:JSON.stringify({status:payload.status, decided_at:new Date().toISOString()}) });
-      if (payload.status === "REJECTED" && payload.opportunityId) {
+      const approvalId=String(payload?.id||"").trim();
+      const decision=String(payload?.status||"");
+      if(!approvalId || !["APPROVED","REJECTED"].includes(decision)) {
+        return NextResponse.json({ok:false,error:"A valid approval id and APPROVED/REJECTED decision are required."},{status:400});
+      }
+      const approvalRows=await supabaseRequest("approvals?id=eq."+encodeURIComponent(approvalId)+"&select=*");
+      const approval=Array.isArray(approvalRows)?approvalRows[0]:null;
+      if(!approval) return NextResponse.json({ok:false,error:"Approval not found."},{status:404});
+      if(String(approval.status||"")!=="PENDING") return NextResponse.json({ok:false,error:"This approval has already been decided."},{status:409});
+      const approvalTitle=String(approval.title||"");
+      if(approvalTitle.startsWith("Bootstrap permission review:")) {
+        return NextResponse.json({ok:false,error:"Decide this permission review on the Funding Brain page so provider-safety notes are recorded correctly."},{status:403});
+      }
+      result = await supabaseRequest("approvals?id=eq."+encodeURIComponent(approvalId), { method:"PATCH", body:JSON.stringify({status:decision, decided_at:new Date().toISOString()}) });
+      // A funded-resumption decision is only a workflow gate. Never let its
+      // rejection accidentally reject whichever unrelated opportunity is selected.
+      const isFundingResume=approvalTitle.startsWith("Approve funded opportunity resumption:");
+      if (decision === "REJECTED" && payload.opportunityId && !isFundingResume) {
         await supabaseRequest("opportunities?id=eq."+encodeURIComponent(payload.opportunityId), { method:"PATCH", body:JSON.stringify({status:"REJECTED", next_action:"Owner rejected this monetization test; the agent should move to the next eligible zero-capital opportunity."}), headers:{"Prefer":"return=minimal"} });
         const rejectedTasks=await supabaseRequest("tasks?opportunity_id=eq."+encodeURIComponent(payload.opportunityId)+"&status=eq.READY&select=*");
         if(Array.isArray(rejectedTasks)) for(const task of rejectedTasks){
