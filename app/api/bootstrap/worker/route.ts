@@ -10,6 +10,64 @@ function authorized(req: Request) {
   return Boolean(secret) && req.headers.get("authorization") === `Bearer ${secret}`;
 }
 
+/**
+ * Reserve confirmed ZAR account balances against queued business funding requests.
+ * A FUNDED request is an internal reservation, not a transfer or proof that money
+ * has been spent. Non-ZAR accounts are deliberately excluded to avoid unsafe FX math.
+ */
+async function reconcileFundingRequests() {
+  const [accountsResult, requestsResult] = await Promise.all([
+    supabaseRequest("capital_accounts?select=*").catch(() => []),
+    supabaseRequest("funding_requests?status=in.(QUEUED,FUNDED)&order=created_at.asc&select=*").catch(() => [])
+  ]);
+  const accounts = Array.isArray(accountsResult) ? accountsResult : [];
+  const requests = Array.isArray(requestsResult) ? requestsResult : [];
+  const availableZar = accounts
+    .filter((account:any) => String(account?.currency || "ZAR").toUpperCase() === "ZAR")
+    .reduce((sum:number, account:any) => {
+      const balance = Number(account?.balance);
+      return sum + (Number.isFinite(balance) && balance > 0 ? balance : 0);
+    }, 0);
+
+  // Existing reservations consume available funds first, preventing two queued
+  // opportunities from claiming the same balance on later heartbeat runs.
+  let reserved = requests
+    .filter((request:any) => String(request?.status || "") === "FUNDED" && String(request?.currency || "ZAR").toUpperCase() === "ZAR")
+    .reduce((sum:number, request:any) => {
+      const amount = Number(request?.requested_amount);
+      return sum + (Number.isFinite(amount) && amount > 0 ? amount : 0);
+    }, 0);
+
+  const newlyFunded:string[] = [];
+  for (const request of requests) {
+    if (String(request?.status || "") !== "QUEUED") continue;
+    if (String(request?.currency || "ZAR").toUpperCase() !== "ZAR") continue;
+    const amount = Number(request?.requested_amount);
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    if (reserved + amount > availableZar) continue;
+
+    const id = String(request?.id || "");
+    if (!id) continue;
+    await supabaseRequest("funding_requests?id=eq." + encodeURIComponent(id), {
+      method:"PATCH",
+      body:JSON.stringify({
+        status:"FUNDED",
+        reason:String(request?.reason || "") + " [Capital reserved from confirmed ZAR account balance; no transfer or spend performed.]"
+      }),
+      headers:{"Prefer":"return=minimal"}
+    });
+    reserved += amount;
+    newlyFunded.push(id);
+  }
+
+  return {
+    availableZar,
+    reservedZar:reserved,
+    newlyReservedRequests:newlyFunded,
+    note:"FUNDED means internally reserved only. Opportunities remain queued until the separate resume workflow is implemented; no money is moved or spent."
+  };
+}
+
 function readableError(value: unknown, fallback: string) {
   if (value instanceof Error && value.message) return value.message;
   if (typeof value === "string" && value.trim()) return value;
@@ -25,6 +83,7 @@ export async function POST(req: Request) {
   }
 
   try {
+    const fundingReconciliation = await reconcileFundingRequests();
     const discovered:any[] = [];
     const discoveryErrors:string[] = [];
 
@@ -215,6 +274,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       ok:true,
       worker:"bootstrap-funding-heartbeat",
+      fundingReconciliation,
       discovered:discovered.length,
       verified:verified.length,
       queued:queued.length,
