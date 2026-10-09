@@ -19,7 +19,14 @@ export function getNextAction(input: {
   evidence?: any[];
   activeRunId?: string;
 }): AgentAction {
-  const pendingApproval = input.approvals.find((a) => a.status === "PENDING");
+  // Funding Brain permission reviews share the approvals table, but they must
+  // never pause the independent Business Brain workflow. Until approvals have
+  // a dedicated workflow column, use the stable title namespace written by
+  // /api/bootstrap/permission. All other pending approvals still block here.
+  const pendingApproval = input.approvals.find((a) =>
+    a.status === "PENDING" &&
+    !String(a.title || "").startsWith("Bootstrap permission review:")
+  );
   if (pendingApproval) {
     return {
       opportunityId: "system",
