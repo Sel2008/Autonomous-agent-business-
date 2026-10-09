@@ -21,6 +21,28 @@ export default function BootstrapPage(){
   finally{setLoading(false)}
  }
  useEffect(()=>{load();const t=window.setInterval(load,3000);return()=>window.clearInterval(t)},[]);
+ async function requestPermission(opportunityId:string){
+  setPermissionBusy(opportunityId);setMessage("");
+  try{
+   const r=await fetch("/api/bootstrap/permission",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"request",opportunityId})});
+   const j=await r.json();
+   if(!r.ok||!j.ok) throw new Error(j.error||"Could not request owner approval.");
+   setMessage(j.existing?"An owner permission review is already pending.":"Owner permission review requested. The agent will wait for your decision.");
+   await load();
+  }catch(e){setMessage(e instanceof Error?e.message:"Permission request failed.");}
+  finally{setPermissionBusy("");}
+ }
+ async function decidePermission(approvalId:string,decision:"APPROVED"|"REJECTED"){
+  setPermissionBusy(approvalId);setMessage("");
+  try{
+   const r=await fetch("/api/bootstrap/permission",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"decide",approvalId,decision})});
+   const j=await r.json();
+   if(!r.ok||!j.ok) throw new Error(j.error||"Could not save your decision.");
+   setMessage(decision==="APPROVED"?"Approved for a supervised review only. Automation remains disabled until provider permission is verified and an adapter exists.":"Rejected. Automated execution remains paused.");
+   await load();
+  }catch(e){setMessage(e instanceof Error?e.message:"Decision failed.");}
+  finally{setPermissionBusy("");}
+ }
  async function discoverAndVerify(){
   setRunning(true);setMessage("");
   try{
