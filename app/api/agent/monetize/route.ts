@@ -144,7 +144,34 @@ export async function POST(req: Request) {
           headers:{"Prefer":"return=minimal"}
         });
       }
-      return NextResponse.json({ok:true,opportunityId,plan,planningMode,provider,capitalStatus:"QUEUED_CAPITAL",fundingRequired:true,nextAction:"Find legitimate zero-upfront bootstrap work while this business waits for capital."});
+
+      // Planning is complete even when execution is deferred. Completing this
+      // task prevents heartbeat retries from rebuilding the same plan while
+      // the opportunity waits for verified capital.
+      const fundingPlanTasks=await supabaseRequest(
+        "tasks?opportunity_id=eq."+encodeURIComponent(opportunityId)+"&select=*"
+      ).catch(()=>[]);
+      const fundingPlanTask=Array.isArray(fundingPlanTasks)
+        ? fundingPlanTasks.find((t:any)=>String(t?.title||"").toLowerCase().includes("build monetization plan") && String(t?.status||"")!=="COMPLETE")
+        : null;
+      if(fundingPlanTask?.id){
+        await supabaseRequest("tasks?id=eq."+encodeURIComponent(String(fundingPlanTask.id)),{
+          method:"PATCH",
+          body:JSON.stringify({status:"COMPLETE"}),
+          headers:{"Prefer":"return=minimal"}
+        });
+      }
+
+      return NextResponse.json({
+        ok:true,
+        opportunityId,
+        plan,
+        planningMode,
+        provider,
+        capitalStatus:"QUEUED_CAPITAL",
+        fundingRequired:true,
+        nextAction:"This opportunity is safely queued. The Business Brain should select another fully verified opportunity that can start with available capital while bootstrap work continues."
+      });
     }
 
     const tasks=await supabaseRequest("tasks?opportunity_id=eq."+encodeURIComponent(opportunityId)+"&status=eq.READY&select=*");
