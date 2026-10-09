@@ -234,34 +234,25 @@ export async function POST(req: Request) {
     );
     const queued:string[] = [];
 
+    const taskQueueErrors:any[] = [];
     for (const op of Array.isArray(ready) ? ready : []) {
-      // One durable work slot per opportunity, including terminal failures.
-      // This prevents every heartbeat from silently creating duplicate work
-      // after a provider failure. Retries must be an explicit, auditable action.
-      const existing = await supabaseRequest(
-        "bootstrap_tasks?opportunity_id=eq." + encodeURIComponent(String(op.id)) +
-        "&select=id,status&limit=1"
-      ).catch(()=>[]);
-
-      if (Array.isArray(existing) && existing.length) continue;
-
-      const task = await supabaseRequest("bootstrap_tasks", {
-        method:"POST",
-        body:JSON.stringify({
-          opportunity_id:String(op.id),
-          external_task_id:"",
-          title:String(op.title || "Bootstrap work") + " — provider work slot",
-          status:"READY",
-          gross_amount:0,
-          fees:0,
-          net_amount:0,
-          currency:String(op.currency || "ZAR"),
-          payout_status:"NOT_STARTED",
-          notes:"Queued by the continuous funding worker. Execution requires a provider adapter and explicit automation permission."
-        }),
-        headers:{"Prefer":"return=representation"}
-      });
-      if (Array.isArray(task) && task[0]?.id) queued.push(String(task[0].id));
+      // The database RPC takes a per-opportunity lock so overlapping heartbeat
+      // runs cannot create duplicate task slots for the same candidate.
+      try {
+        const queuedTask=await supabaseRequest("rpc/ensure_bootstrap_task_slot",{
+          method:"POST",
+          body:JSON.stringify({
+            p_opportunity_id:String(op.id),
+            p_title:String(op.title||"Bootstrap work")+" — provider work slot",
+            p_currency:String(op.currency||"ZAR")
+          }),
+          headers:{"Prefer":"return=representation"}
+        });
+        const taskInfo=queuedTask&&typeof queuedTask==="object"&&!Array.isArray(queuedTask)?queuedTask:null;
+        if(taskInfo?.created===true&&taskInfo?.taskId) queued.push(String(taskInfo.taskId));
+      } catch(error) {
+        taskQueueErrors.push({opportunityId:String(op.id),error:readableError(error,"Atomic task queue RPC is unavailable.")});
+      }
     }
 
     // Execute only through an explicitly registered provider adapter.
@@ -380,6 +371,7 @@ export async function POST(req: Request) {
       manualOnly:Array.isArray(manual) ? manual.length : 0,
       discoveryErrors,
       verificationErrors,
+      taskQueueErrors,
       execution:{
         autonomousReadyQueued:queued.length,
         tasksAttempted:executionResults.filter(x=>["IN_PROGRESS","SUBMITTED","PENDING_PAYOUT"].includes(String(x.status))).length,
