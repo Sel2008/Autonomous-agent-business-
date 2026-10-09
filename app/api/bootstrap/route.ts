@@ -14,12 +14,13 @@ const safety=[
 export async function GET(){
  if(!supabaseConfigured()) return NextResponse.json({configured:false,schemaReady:false,balances:{available:0,pending:0,withdrawable:0,totalEarned:0,today:0,week:0},activeTasks:[],opportunities:[],fundingRequests:[],accounts:[],safety});
  try{
-  const [accounts,opps,tasks,txs,requests]=await Promise.all([
+  const [accounts,opps,tasks,txs,requests,approvals]=await Promise.all([
    supabaseRequest("capital_accounts?select=*&order=created_at.asc"),
    supabaseRequest("bootstrap_opportunities?select=*&order=created_at.desc"),
    supabaseRequest("bootstrap_tasks?select=*&order=created_at.desc"),
    supabaseRequest("capital_transactions?select=*&order=created_at.desc"),
-   supabaseRequest("funding_requests?select=*&order=created_at.desc")
+   supabaseRequest("funding_requests?select=*&order=created_at.desc"),
+   supabaseRequest("approvals?select=*&order=created_at.desc")
   ]);
   const rows=Array.isArray(txs)?txs:[];
   const earnings=rows.filter((x:any)=>String(x?.kind)==="EARNING" && ["RECORDED","CONFIRMED"].includes(String(x?.status||"")));
@@ -40,6 +41,7 @@ export async function GET(){
    activeTasks:(Array.isArray(tasks)?tasks:[]).filter((x:any)=>["READY","IN_PROGRESS","SUBMITTED","PENDING_PAYOUT"].includes(String(x.status))),
    opportunities:opportunityRows.filter((x:any)=>["DISCOVERED","VERIFIED","READY","ACTIVE","PAUSED"].includes(String(x.status))),
    fundingRequests:requestRows.map((x:any)=>({...x,opportunity_name:oppMap.get(String(x.opportunity_id))?.name||x.opportunity_id})),
+   permissionApprovals:(Array.isArray(approvals)?approvals:[]).filter((x:any)=>String(x.title||"").startsWith("Bootstrap permission review: ")),
    accounts:accts,safety
   });
  }catch(error){
