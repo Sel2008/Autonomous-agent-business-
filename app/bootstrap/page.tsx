@@ -5,15 +5,16 @@ import { useEffect, useState } from "react";
 type BootstrapData={
   configured:boolean; schemaReady:boolean;
   balances:{available:number;pending:number;withdrawable:number;totalEarned:number;today:number;week:number};
-  activeTasks:any[]; opportunities:any[]; fundingRequests:any[]; accounts:any[]; safety:string[]; error?:string;
+  activeTasks:any[]; opportunities:any[]; fundingRequests:any[]; permissionApprovals:any[]; accounts:any[]; safety:string[]; error?:string;
 };
-const empty:BootstrapData={configured:true,schemaReady:false,balances:{available:0,pending:0,withdrawable:0,totalEarned:0,today:0,week:0},activeTasks:[],opportunities:[],fundingRequests:[],accounts:[],safety:[]};
+const empty:BootstrapData={configured:true,schemaReady:false,balances:{available:0,pending:0,withdrawable:0,totalEarned:0,today:0,week:0},activeTasks:[],opportunities:[],fundingRequests:[],permissionApprovals:[],accounts:[],safety:[]};
 
 export default function BootstrapPage(){
  const [data,setData]=useState<BootstrapData>(empty);
  const [loading,setLoading]=useState(true);
  const [running,setRunning]=useState(false);
  const [message,setMessage]=useState("");
+ const [permissionBusy,setPermissionBusy]=useState("");
  async function load(){
   try{const r=await fetch("/api/bootstrap",{cache:"no-store"});setData({...empty,...await r.json()});}
   catch{setData({...empty,error:"Bootstrap engine could not be reached."})}
