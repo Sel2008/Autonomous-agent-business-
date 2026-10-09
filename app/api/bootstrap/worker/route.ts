@@ -176,6 +176,23 @@ export async function POST(req: Request) {
   }
 
   try {
+    // Reconcile abandoned claims before discovering or processing new work.
+    // Expired claims are marked FAILED for review, never blindly re-queued.
+    let staleClaimRecovery:any = null;
+    let staleClaimRecoveryError = "";
+    try {
+      staleClaimRecovery = await supabaseRequest("rpc/expire_stale_bootstrap_claims", {
+        method:"POST",
+        body:JSON.stringify({p_stale_minutes:120}),
+        headers:{"Prefer":"return=representation"}
+      });
+      if (!staleClaimRecovery || typeof staleClaimRecovery !== "object" || Array.isArray(staleClaimRecovery) || staleClaimRecovery.ok !== true) {
+        staleClaimRecoveryError = String(staleClaimRecovery?.reason || "Stale claim recovery RPC returned an unexpected result.");
+      }
+    } catch (error) {
+      staleClaimRecoveryError = readableError(error, "Stale claim recovery RPC is unavailable.");
+    }
+
     const fundingReconciliation = await reconcileFundingRequests();
     const fundingResumption = await resumeApprovedFundedOpportunities(fundingReconciliation);
     const discovered:any[] = [];
@@ -370,6 +387,9 @@ export async function POST(req: Request) {
     return NextResponse.json({
       ok:true,
       worker:"bootstrap-funding-heartbeat",
+      staleClaimRecovery: staleClaimRecoveryError
+        ? {ok:false, error:staleClaimRecoveryError}
+        : staleClaimRecovery,
       fundingReconciliation,
       fundingResumption,
       discovered:discovered.length,
