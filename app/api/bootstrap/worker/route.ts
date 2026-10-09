@@ -15,6 +15,80 @@ function authorized(req: Request) {
  * A FUNDED request is an internal reservation, not a transfer or proof that money
  * has been spent. Non-ZAR accounts are deliberately excluded to avoid unsafe FX math.
  */
+async function ensureFundingResumeApproval(request:any) {
+  const opportunityId=String(request?.opportunity_id||"");
+  const requestId=String(request?.id||"");
+  if(!opportunityId || !requestId) return null;
+  const opportunities=await supabaseRequest("opportunities?id=eq."+encodeURIComponent(opportunityId)+"&select=id,name,status");
+  const opportunity=Array.isArray(opportunities)?opportunities[0]:null;
+  if(!opportunity || String(opportunity.status||"")!=="QUEUED_CAPITAL") return null;
+  const title="Approve funded opportunity resumption: "+String(opportunity.name||opportunityId)+" [opportunity:"+opportunityId+"] [funding-request:"+requestId+"]";
+  const existing=await supabaseRequest("approvals?title=eq."+encodeURIComponent(title)+"&order=created_at.desc&limit=1&select=*").catch(()=>[]);
+  if(Array.isArray(existing) && existing[0]) return existing[0];
+  const created=await supabaseRequest("approvals",{
+    method:"POST",
+    body:JSON.stringify({title,tier:"T1",status:"PENDING",reason:"Confirmed ZAR capital is reserved. Approval permits the Business Brain to resume planning/preparation only; it does not authorize spending, transfers, or outreach sending."}),
+    headers:{"Prefer":"return=representation"}
+  });
+  return Array.isArray(created)?created[0]||null:null;
+}
+
+async function resumeApprovedFundedOpportunities() {
+  const requestsResult=await supabaseRequest("funding_requests?status=eq.FUNDED&order=created_at.asc&select=*").catch(()=>[]);
+  const requests=Array.isArray(requestsResult)?requestsResult:[];
+  const resumed:string[]=[];
+  const waiting:string[]=[];
+  for(const request of requests) {
+    const opportunityId=String(request?.opportunity_id||"");
+    const requestId=String(request?.id||"");
+    if(!opportunityId || !requestId) continue;
+    const titlePrefix="Approve funded opportunity resumption:";
+    const approvals=await supabaseRequest("approvals?title=like."+encodeURIComponent(titlePrefix+"%[opportunity:"+opportunityId+"] [funding-request:"+requestId+"]")+"&order=created_at.desc&limit=1&select=*").catch(()=>[]);
+    // PostgREST LIKE patterns and URL encoding differ across deployments; fall back
+    // to listing recent approvals and exact matching the stable request marker.
+    let approval=Array.isArray(approvals)?approvals.find((a:any)=>String(a?.title||"").includes("[funding-request:"+requestId+"]")):null;
+    if(!approval) {
+      const recent=await supabaseRequest("approvals?order=created_at.desc&limit=200&select=*").catch(()=>[]);
+      approval=Array.isArray(recent)?recent.find((a:any)=>String(a?.title||"").startsWith(titlePrefix) && String(a?.title||"").includes("[funding-request:"+requestId+"]")):null;
+    }
+    if(!approval || String(approval.status||"")!=="APPROVED") {
+      await ensureFundingResumeApproval(request);
+      waiting.push(opportunityId);
+      continue;
+    }
+
+    const opportunities=await supabaseRequest("opportunities?id=eq."+encodeURIComponent(opportunityId)+"&select=*").catch(()=>[]);
+    const op=Array.isArray(opportunities)?opportunities[0]:null;
+    if(!op || String(op.status||"")!=="QUEUED_CAPITAL") continue;
+    const verificationRows=await supabaseRequest("opportunity_verification?opportunity_id=eq."+encodeURIComponent(opportunityId)+"&select=*").catch(()=>[]);
+    const verification=Array.isArray(verificationRows)?verificationRows:[];
+    const fullyVerified=["demand","access","margin","repeatability","risk"].every((key)=>{
+      const values=verification.map((v:any)=>String(v?.[key]||"UNVERIFIED"));
+      return values.includes("CHECKED") || values.includes("STRONG");
+    });
+    if(!fullyVerified) {
+      waiting.push(opportunityId);
+      continue;
+    }
+    const selected=await supabaseRequest("opportunities?status=eq.SELECTED&select=id&limit=1").catch(()=>[]);
+    if(Array.isArray(selected) && selected.some((row:any)=>String(row?.id||"")!==opportunityId)) {
+      waiting.push(opportunityId);
+      continue;
+    }
+
+    await supabaseRequest("opportunities?id=eq."+encodeURIComponent(opportunityId),{
+      method:"PATCH",
+      body:JSON.stringify({
+        status:"SELECTED",
+        next_action:"Confirmed capital is reserved and the owner approved resumption. Continue with non-sending preparation; any spending or outreach sending still requires its own safeguards."
+      }),
+      headers:{"Prefer":"return=minimal"}
+    });
+    resumed.push(opportunityId);
+  }
+  return {resumedOpportunityIds:resumed,waitingOpportunityIds:[...new Set(waiting)],note:"Resumption only restores the selected workflow after an explicit owner approval and full verification. It does not spend funds or send outreach."};
+}
+
 async function reconcileFundingRequests() {
   const [accountsResult, requestsResult] = await Promise.all([
     supabaseRequest("capital_accounts?select=*").catch(() => []),
@@ -60,6 +134,10 @@ async function reconcileFundingRequests() {
     newlyFunded.push(id);
   }
 
+  for(const request of requests.filter((item:any)=>String(item?.status||"")==="FUNDED")) {
+    await ensureFundingResumeApproval(request).catch(()=>null);
+  }
+
   return {
     availableZar,
     reservedZar:reserved,
@@ -84,6 +162,7 @@ export async function POST(req: Request) {
 
   try {
     const fundingReconciliation = await reconcileFundingRequests();
+    const fundingResumption = await resumeApprovedFundedOpportunities();
     const discovered:any[] = [];
     const discoveryErrors:string[] = [];
 
@@ -275,6 +354,7 @@ export async function POST(req: Request) {
       ok:true,
       worker:"bootstrap-funding-heartbeat",
       fundingReconciliation,
+      fundingResumption,
       discovered:discovered.length,
       verified:verified.length,
       queued:queued.length,
