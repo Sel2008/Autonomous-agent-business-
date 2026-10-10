@@ -29,7 +29,7 @@ export async function middleware(request: NextRequest) {
   // The worker then calls only its protected internal agent routes using the
   // dedicated x-agent-worker-secret header. Never expose this header to browsers.
   const cronSecret = process.env.CRON_SECRET;
-  const isHeartbeat = pathname === "/api/agent/worker" &&
+  const isHeartbeat = (pathname === "/api/agent/worker" || pathname === "/api/bootstrap/worker") &&
     cronSecret &&
     request.headers.get("authorization") === `Bearer ${cronSecret}`;
   const isInternalWorkerCall = pathname !== "/api/agent/worker" &&
