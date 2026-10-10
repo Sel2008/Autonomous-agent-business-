@@ -57,7 +57,25 @@ export async function verifyOpportunity(op:BootstrapOpportunity){
     "Opportunity:",JSON.stringify(op),"SOURCE PAGE:",text
   ].join("\n"),schema});
   if(!ai) return {ok:false,error:"No AI provider was available for verification."};
-  let v:any; try{v=JSON.parse(ai.text)}catch{return {ok:false,error:"Provider verification returned invalid JSON."}};
+  // Providers occasionally wrap valid JSON in Markdown or prepend a short explanation.
+  // Extract only a complete JSON object; never guess missing fields or treat malformed
+  // output as permission to automate.
+  function parseVerificationJson(raw:string):any|null {
+    const trimmed=raw.trim().replace(/^\x60{3}(?:json)?\s*/i,"").replace(/\s*\x60{3}\s*$/,"").trim();
+    const candidates=[trimmed];
+    const start=trimmed.indexOf("{");
+    const end=trimmed.lastIndexOf("}");
+    if(start>=0 && end>start) candidates.push(trimmed.slice(start,end+1));
+    for(const candidate of candidates) {
+      try {
+        const parsed=JSON.parse(candidate);
+        if(parsed && typeof parsed==="object" && !Array.isArray(parsed)) return parsed;
+      } catch {}
+    }
+    return null;
+  }
+  const v=parseVerificationJson(ai.text);
+  if(!v) return {ok:false,error:"Provider verification returned invalid JSON."};;
 
   const evidence=String(v.automationEvidence||"").trim();
   const evidenceIsVerbatim=Boolean(evidence) && text.toLowerCase().includes(evidence.toLowerCase());
