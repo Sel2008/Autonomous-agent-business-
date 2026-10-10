@@ -32,7 +32,7 @@ export async function verifyOpportunity(op:BootstrapOpportunity){
   let r:Response|null=null;
   for(let hop=0;hop<=5;hop++){
     if(!safeSourceUrl(currentUrl)) return {ok:false,error:"A source redirect pointed to an unsafe or invalid URL."};
-    r=await fetch(currentUrl,{redirect:"manual",cache:"no-store"}).catch(()=>null);
+    r=await fetch(currentUrl,{redirect:"manual",cache:"no-store",signal:AbortSignal.timeout(8000)}).catch(()=>null);
     if(!r) return {ok:false,error:"The source page could not be fetched safely."};
     if(r.status>=300 && r.status<400){
       const location=r.headers.get("location");
