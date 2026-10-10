@@ -45,7 +45,10 @@ const schema={
 export async function discoverViaExa(query:string):Promise<ProviderDiscoveryResult[]>{
   const results=await exaSearch(query);
   if(!results.length) throw new Error("Exa returned zero web results for the bootstrap discovery query.");
-  // Keep the prompt small to stretch free-tier token quotas. Source URLs are still\n  // checked against the original Exa results, and unknown automation permission\n  // remains MANUAL_ONLY; reducing context never relaxes safety gates.\n  const compact=results.slice(0,4).map((r:any)=>({title:r.title,url:r.url,text:String(r.text||"").slice(0,900)}));
+  // Keep the prompt small to stretch free-tier token quotas.
+  // Source URLs are still checked against the original Exa results.
+  // Unknown automation permission remains MANUAL_ONLY; reducing context never relaxes safety gates.
+  const compact=results.slice(0,4).map((r:any)=>({title:r.title,url:r.url,text:String(r.text||"").slice(0,900)}));
   const ai=await runBusinessAIWithDiagnostics({prompt:[
     "You are the safety verifier for an autonomous bootstrap-earnings engine.",
     "Extract only opportunities supported by the supplied web-source text.",
