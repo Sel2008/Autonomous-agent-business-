@@ -20,7 +20,8 @@ async function exaSearch(query:string){
     method:"POST",
     headers:{"x-api-key":key,"Content-Type":"application/json"},
     body:JSON.stringify({query,numResults:12,type:"auto",contents:{text:{maxCharacters:5000}}}),
-    cache:"no-store"
+    cache:"no-store",
+    signal:AbortSignal.timeout(10000)
   });
   if(!r.ok) throw new Error(`Exa discovery failed with HTTP ${r.status}.`);
   const data=await r.json().catch(()=>null);
