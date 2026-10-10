@@ -25,13 +25,27 @@ function safeSourceUrl(value:string){
 export async function verifyOpportunity(op:BootstrapOpportunity){
   if(!safeSourceUrl(op.source_url)) return {ok:false,error:"Unsafe or invalid source URL."};
 
-  // Do not follow redirects from an untrusted candidate URL. A redirect could
-  // otherwise point the server-side fetch at an internal service.
-  const r=await fetch(op.source_url,{redirect:"manual",cache:"no-store"}).catch(()=>null);
-  if(!r || (r.status>=300 && r.status<400)) {
-    return {ok:false,error:"The source page redirected or could not be fetched safely."};
+  // Follow a small number of redirects manually. Validate every destination
+  // before fetching it so an untrusted source cannot redirect verification to
+  // localhost or a private/link-local address.
+  let currentUrl=op.source_url;
+  let r:Response|null=null;
+  for(let hop=0;hop<=5;hop++){
+    if(!safeSourceUrl(currentUrl)) return {ok:false,error:"A source redirect pointed to an unsafe or invalid URL."};
+    r=await fetch(currentUrl,{redirect:"manual",cache:"no-store"}).catch(()=>null);
+    if(!r) return {ok:false,error:"The source page could not be fetched safely."};
+    if(r.status>=300 && r.status<400){
+      const location=r.headers.get("location");
+      if(!location) return {ok:false,error:"The source page returned a redirect without a destination."};
+      if(hop===5) return {ok:false,error:"The source page exceeded the safe redirect limit."};
+      try{currentUrl=new URL(location,currentUrl).toString();}
+      catch{return {ok:false,error:"The source page returned an invalid redirect destination."};}
+      continue;
+    }
+    break;
   }
-  const text=r.ok?(await r.text()).slice(0,12000):"";
+  if(!r || !r.ok) return {ok:false,error:"The source page could not be fetched."};
+  const text=(await r.text()).slice(0,12000);
   if(!text) return {ok:false,error:"The source page could not be fetched."};
 
   const ai=await runBusinessAI({prompt:[
