@@ -33,7 +33,23 @@ async function ensureFundingResumeApproval(request:any) {
   return Array.isArray(created)?created[0]||null:null;
 }
 
-async function resumeApprovedFundedOpportunities() {
+async function resumeApprovedFundedOpportunities(reservationReconciliation:any) {
+  if(!reservationReconciliation?.reservationReady) {
+    return {resumedOpportunityIds:[],waitingOpportunityIds:[],note:"Resumption is paused until atomic funding reservation is available."};
+  }
+  const [accountsForResume,allFundedResult]=await Promise.all([
+    supabaseRequest("capital_accounts?select=*").catch(()=>[]),
+    supabaseRequest("funding_requests?status=eq.FUNDED&order=created_at.asc&select=*").catch(()=>[])
+  ]);
+  const confirmedBalance=(Array.isArray(accountsForResume)?accountsForResume:[])
+    .filter((account:any)=>String(account?.currency||"ZAR").toUpperCase()==="ZAR"&&account?.connected===true&&account?.owner_approved===true)
+    .reduce((sum:number,account:any)=>{const n=Number(account?.balance);return sum+(Number.isFinite(n)&&n>0?n:0);},0);
+  const totalReserved=(Array.isArray(allFundedResult)?allFundedResult:[])
+    .filter((request:any)=>String(request?.currency||"ZAR").toUpperCase()==="ZAR")
+    .reduce((sum:number,request:any)=>{const n=Number(request?.requested_amount);return sum+(Number.isFinite(n)&&n>0?n:0);},0);
+  if(totalReserved>confirmedBalance) {
+    return {resumedOpportunityIds:[],waitingOpportunityIds:[],note:"Resumption is paused because currently confirmed, owner-approved ZAR balances do not cover all existing reservations."};
+  }
   const requestsResult=await supabaseRequest("funding_requests?status=eq.FUNDED&order=created_at.asc&select=*").catch(()=>[]);
   const requests=Array.isArray(requestsResult)?requestsResult:[];
   const resumed:string[]=[];
@@ -90,59 +106,58 @@ async function resumeApprovedFundedOpportunities() {
 }
 
 async function reconcileFundingRequests() {
-  const [accountsResult, requestsResult] = await Promise.all([
-    supabaseRequest("capital_accounts?select=*").catch(() => []),
-    supabaseRequest("funding_requests?status=in.(QUEUED,FUNDED)&order=created_at.asc&select=*").catch(() => [])
-  ]);
-  const accounts = Array.isArray(accountsResult) ? accountsResult : [];
-  const requests = Array.isArray(requestsResult) ? requestsResult : [];
-  const availableZar = accounts
-    .filter((account:any) => String(account?.currency || "ZAR").toUpperCase() === "ZAR")
-    .reduce((sum:number, account:any) => {
-      const balance = Number(account?.balance);
-      return sum + (Number.isFinite(balance) && balance > 0 ? balance : 0);
-    }, 0);
-
-  // Existing reservations consume available funds first, preventing two queued
-  // opportunities from claiming the same balance on later heartbeat runs.
-  let reserved = requests
-    .filter((request:any) => String(request?.status || "") === "FUNDED" && String(request?.currency || "ZAR").toUpperCase() === "ZAR")
-    .reduce((sum:number, request:any) => {
-      const amount = Number(request?.requested_amount);
-      return sum + (Number.isFinite(amount) && amount > 0 ? amount : 0);
-    }, 0);
-
-  const newlyFunded:string[] = [];
-  for (const request of requests) {
-    if (String(request?.status || "") !== "QUEUED") continue;
-    if (String(request?.currency || "ZAR").toUpperCase() !== "ZAR") continue;
-    const amount = Number(request?.requested_amount);
-    if (!Number.isFinite(amount) || amount <= 0) continue;
-    if (reserved + amount > availableZar) continue;
-
-    const id = String(request?.id || "");
-    if (!id) continue;
-    await supabaseRequest("funding_requests?id=eq." + encodeURIComponent(id), {
-      method:"PATCH",
-      body:JSON.stringify({
-        status:"FUNDED",
-        reason:String(request?.reason || "") + " [Capital reserved from confirmed ZAR account balance; no transfer or spend performed.]"
-      }),
-      headers:{"Prefer":"return=minimal"}
+  // Reservation must be atomic in Postgres. If the migration is not installed,
+  // fail closed for new reservations rather than risk allocating the same balance twice.
+  let atomicResult:any=null;
+  let reservationError="";
+  try {
+    atomicResult=await supabaseRequest("rpc/reserve_queued_funding_requests",{
+      method:"POST",
+      body:JSON.stringify({}),
+      headers:{"Prefer":"return=representation"}
     });
-    reserved += amount;
-    newlyFunded.push(id);
+  } catch(error) {
+    reservationError=readableError(error,"Atomic funding reservation RPC is unavailable.");
   }
+  if(!reservationError && (!atomicResult || typeof atomicResult!=="object" || Array.isArray(atomicResult) || !Number.isFinite(Number(atomicResult.availableZar)))) {
+    reservationError="Atomic funding reservation RPC returned an unexpected result.";
+  }
+
+  const [accountsResult,requestsResult]=await Promise.all([
+    supabaseRequest("capital_accounts?select=*").catch(()=>[]),
+    supabaseRequest("funding_requests?status=in.(QUEUED,FUNDED)&order=created_at.asc&select=*").catch(()=>[])
+  ]);
+  const accounts=Array.isArray(accountsResult)?accountsResult:[];
+  const requests=Array.isArray(requestsResult)?requestsResult:[];
+  const availableZar=accounts
+    .filter((account:any)=>String(account?.currency||"ZAR").toUpperCase()==="ZAR"&&account?.connected===true&&account?.owner_approved===true)
+    .reduce((sum:number,account:any)=>{
+      const balance=Number(account?.balance);
+      return sum+(Number.isFinite(balance)&&balance>0?balance:0);
+    },0);
+  const currentReserved=requests
+    .filter((request:any)=>String(request?.status||"")==="FUNDED"&&String(request?.currency||"ZAR").toUpperCase()==="ZAR")
+    .reduce((sum:number,request:any)=>{
+      const amount=Number(request?.requested_amount);
+      return sum+(Number.isFinite(amount)&&amount>0?amount:0);
+    },0);
 
   for(const request of requests.filter((item:any)=>String(item?.status||"")==="FUNDED")) {
     await ensureFundingResumeApproval(request).catch(()=>null);
   }
 
+  const result=atomicResult&&typeof atomicResult==="object"&&!Array.isArray(atomicResult)
+    ? atomicResult
+    : {};
   return {
-    availableZar,
-    reservedZar:reserved,
-    newlyReservedRequests:newlyFunded,
-    note:"FUNDED means internally reserved only. Opportunities remain queued until the separate resume workflow is implemented; no money is moved or spent."
+    availableZar:Number(result.availableZar??availableZar),
+    reservedZar:Number(result.reservedZar??currentReserved),
+    newlyReservedRequests:Array.isArray(result.newlyReservedRequests)?result.newlyReservedRequests:[],
+    reservationReady:!reservationError,
+    ...(reservationError?{reservationError}:{}),
+    note:reservationError
+      ?"New capital reservations are paused because the atomic database reservation migration is not available. Existing funded requests remain visible; no unsafe fallback reservation was attempted."
+      :"Reservations were serialized in the database. FUNDED means internal reservation only; it does not transfer or spend money."
   };
 }
 
@@ -161,8 +176,25 @@ export async function POST(req: Request) {
   }
 
   try {
+    // Reconcile abandoned claims before discovering or processing new work.
+    // Expired claims are marked FAILED for review, never blindly re-queued.
+    let staleClaimRecovery:any = null;
+    let staleClaimRecoveryError = "";
+    try {
+      staleClaimRecovery = await supabaseRequest("rpc/expire_stale_bootstrap_claims", {
+        method:"POST",
+        body:JSON.stringify({p_stale_minutes:120}),
+        headers:{"Prefer":"return=representation"}
+      });
+      if (!staleClaimRecovery || typeof staleClaimRecovery !== "object" || Array.isArray(staleClaimRecovery) || staleClaimRecovery.ok !== true) {
+        staleClaimRecoveryError = String(staleClaimRecovery?.reason || "Stale claim recovery RPC returned an unexpected result.");
+      }
+    } catch (error) {
+      staleClaimRecoveryError = readableError(error, "Stale claim recovery RPC is unavailable.");
+    }
+
     const fundingReconciliation = await reconcileFundingRequests();
-    const fundingResumption = await resumeApprovedFundedOpportunities();
+    const fundingResumption = await resumeApprovedFundedOpportunities(fundingReconciliation);
     const discovered:any[] = [];
     const discoveryErrors:string[] = [];
 
@@ -219,31 +251,25 @@ export async function POST(req: Request) {
     );
     const queued:string[] = [];
 
+    const taskQueueErrors:any[] = [];
     for (const op of Array.isArray(ready) ? ready : []) {
-      const existing = await supabaseRequest(
-        "bootstrap_tasks?opportunity_id=eq." + encodeURIComponent(String(op.id)) +
-        "&status=in.(READY,IN_PROGRESS,SUBMITTED,PENDING_PAYOUT)&select=id&limit=1"
-      ).catch(()=>[]);
-
-      if (Array.isArray(existing) && existing.length) continue;
-
-      const task = await supabaseRequest("bootstrap_tasks", {
-        method:"POST",
-        body:JSON.stringify({
-          opportunity_id:String(op.id),
-          external_task_id:"",
-          title:String(op.title || "Bootstrap work") + " — provider work slot",
-          status:"READY",
-          gross_amount:0,
-          fees:0,
-          net_amount:0,
-          currency:String(op.currency || "ZAR"),
-          payout_status:"NOT_STARTED",
-          notes:"Queued by the continuous funding worker. Execution requires a provider adapter and explicit automation permission."
-        }),
-        headers:{"Prefer":"return=representation"}
-      });
-      if (Array.isArray(task) && task[0]?.id) queued.push(String(task[0].id));
+      // The database RPC takes a per-opportunity lock so overlapping heartbeat
+      // runs cannot create duplicate task slots for the same candidate.
+      try {
+        const queuedTask=await supabaseRequest("rpc/ensure_bootstrap_task_slot",{
+          method:"POST",
+          body:JSON.stringify({
+            p_opportunity_id:String(op.id),
+            p_title:String(op.title||"Bootstrap work")+" — provider work slot",
+            p_currency:String(op.currency||"ZAR")
+          }),
+          headers:{"Prefer":"return=representation"}
+        });
+        const taskInfo=queuedTask&&typeof queuedTask==="object"&&!Array.isArray(queuedTask)?queuedTask:null;
+        if(taskInfo?.created===true&&taskInfo?.taskId) queued.push(String(taskInfo.taskId));
+      } catch(error) {
+        taskQueueErrors.push({opportunityId:String(op.id),error:readableError(error,"Atomic task queue RPC is unavailable.")});
+      }
     }
 
     // Execute only through an explicitly registered provider adapter.
@@ -272,11 +298,21 @@ export async function POST(req: Request) {
       }
 
       try {
-        await supabaseRequest("bootstrap_tasks?id=eq."+encodeURIComponent(String(task.id)), {
-          method:"PATCH",
-          body:JSON.stringify({status:"IN_PROGRESS",started_at:new Date().toISOString()}),
-          headers:{"Prefer":"return=minimal"}
+        // Claim atomically in Postgres before calling the external provider.
+        // If another heartbeat already claimed this task, do not execute it again.
+        const claim = await supabaseRequest("rpc/claim_bootstrap_task", {
+          method:"POST",
+          body:JSON.stringify({p_task_id:String(task.id)}),
+          headers:{"Prefer":"return=representation"}
         });
+        if (!claim || typeof claim !== "object" || Array.isArray(claim) || claim.claimed !== true) {
+          executionResults.push({
+            taskId:String(task.id),
+            status:"NOT_EXECUTED",
+            reason:String(claim?.reason || "Task was already claimed by another worker.")
+          });
+          continue;
+        }
 
         const result = await adapter.execute(op);
 
@@ -322,28 +358,26 @@ export async function POST(req: Request) {
     let earningsRecorded=0;
 
     for (const task of Array.isArray(paidTasks) ? paidTasks : []) {
-      const existing = await supabaseRequest(
-        "capital_transactions?source_task_id=eq."+encodeURIComponent(String(task.id))+"&kind=eq.EARNING&select=id&limit=1"
-      ).catch(()=>[]);
-      if (Array.isArray(existing) && existing.length) continue;
-
-      const amount=Number(task.net_amount||0);
-      if (!Number.isFinite(amount) || amount<=0) continue;
-
-      await supabaseRequest("capital_transactions", {
-        method:"POST",
-        body:JSON.stringify({
-          kind:"EARNING",
-          amount,
-          currency:String(task.currency||"ZAR"),
-          status:"CONFIRMED",
-          reference:String(task.external_task_id||task.id),
-          source_task_id:String(task.id),
-          notes:"Confirmed bootstrap payout recorded by provider execution adapter."
-        }),
-        headers:{"Prefer":"return=minimal"}
-      });
-      earningsRecorded += 1;
+      // The database RPC serializes ledger writes per task. A read-then-insert
+      // check here would double-credit if two heartbeats processed the same payout.
+      try {
+        const recorded = await supabaseRequest("rpc/record_bootstrap_paid_earning", {
+          method:"POST",
+          body:JSON.stringify({p_task_id:String(task.id)}),
+          headers:{"Prefer":"return=representation"}
+        });
+        if (recorded && typeof recorded === "object" && !Array.isArray(recorded) && recorded.recorded === true) {
+          earningsRecorded += 1;
+        }
+      } catch (error) {
+        // Fail closed: a missing migration or ledger error must never trigger a
+        // non-atomic fallback insert from application code.
+        taskQueueErrors.push({
+          opportunityId:String(task.opportunity_id||""),
+          taskId:String(task.id),
+          error:"Paid earning was not recorded; atomic ledger RPC failed: "+readableError(error,"unknown error")
+        });
+      }
     }
 
     const manual = await supabaseRequest(
@@ -353,6 +387,9 @@ export async function POST(req: Request) {
     return NextResponse.json({
       ok:true,
       worker:"bootstrap-funding-heartbeat",
+      staleClaimRecovery: staleClaimRecoveryError
+        ? {ok:false, error:staleClaimRecoveryError}
+        : staleClaimRecovery,
       fundingReconciliation,
       fundingResumption,
       discovered:discovered.length,
@@ -362,6 +399,7 @@ export async function POST(req: Request) {
       manualOnly:Array.isArray(manual) ? manual.length : 0,
       discoveryErrors,
       verificationErrors,
+      taskQueueErrors,
       execution:{
         autonomousReadyQueued:queued.length,
         tasksAttempted:executionResults.filter(x=>["IN_PROGRESS","SUBMITTED","PENDING_PAYOUT"].includes(String(x.status))).length,

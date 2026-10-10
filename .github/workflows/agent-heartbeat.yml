@@ -23,6 +23,7 @@ jobs:
             -H "Authorization: Bearer $CRON_SECRET" \
             "https://autonomous-agent-business.vercel.app/api/agent/worker"
 
-          curl --fail-with-body --silent --show-error \
+          curl --fail-with-body --silent --show-error --request POST \
             -H "Authorization: Bearer $CRON_SECRET" \
+            -H "Content-Type: application/json" \
             "https://autonomous-agent-business.vercel.app/api/bootstrap/worker"
