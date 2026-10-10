@@ -19,7 +19,7 @@ async function exaSearch(query:string){
   const r=await fetch("https://api.exa.ai/search",{
     method:"POST",
     headers:{"x-api-key":key,"Content-Type":"application/json"},
-    body:JSON.stringify({query,numResults:12,type:"auto",contents:{text:{maxCharacters:5000}}}),
+    body:JSON.stringify({query,numResults:6,type:"auto",contents:{text:{maxCharacters:1600}}}),
     cache:"no-store",
     signal:AbortSignal.timeout(10000)
   });
@@ -45,7 +45,7 @@ const schema={
 export async function discoverViaExa(query:string):Promise<ProviderDiscoveryResult[]>{
   const results=await exaSearch(query);
   if(!results.length) throw new Error("Exa returned zero web results for the bootstrap discovery query.");
-  const compact=results.slice(0,8).map((r:any)=>({title:r.title,url:r.url,text:String(r.text||"").slice(0,2200)}));
+  // Keep the prompt small to stretch free-tier token quotas. Source URLs are still\n  // checked against the original Exa results, and unknown automation permission\n  // remains MANUAL_ONLY; reducing context never relaxes safety gates.\n  const compact=results.slice(0,4).map((r:any)=>({title:r.title,url:r.url,text:String(r.text||"").slice(0,900)}));
   const ai=await runBusinessAIWithDiagnostics({prompt:[
     "You are the safety verifier for an autonomous bootstrap-earnings engine.",
     "Extract only opportunities supported by the supplied web-source text.",
