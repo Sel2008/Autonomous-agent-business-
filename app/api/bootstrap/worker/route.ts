@@ -224,7 +224,10 @@ export async function POST(req: Request) {
     const verified:string[] = [];
     const verificationErrors:any[] = [];
 
-    for (const op of Array.isArray(candidates) ? candidates : []) {
+    // Keep each serverless invocation bounded. Remaining candidates stay DISCOVERED
+    // and are processed by subsequent heartbeats; one slow source cannot consume the
+    // entire Vercel function budget.
+    for (const op of (Array.isArray(candidates) ? candidates : []).slice(0,1)) {
       try {
         const result = await verifyOpportunity(op);
         if (result.ok === false) {
@@ -279,7 +282,8 @@ export async function POST(req: Request) {
     ).catch(()=>[]);
     const executionResults:any[] = [];
 
-    for (const task of Array.isArray(executionCandidates) ? executionCandidates : []) {
+    // Claim at most one external task per invocation to avoid a long batch timing out.
+    for (const task of (Array.isArray(executionCandidates) ? executionCandidates : []).slice(0,1)) {
       const op = task?.bootstrap_opportunities as BootstrapOpportunity | undefined;
       if (!op) continue;
 
