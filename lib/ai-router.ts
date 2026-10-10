@@ -50,7 +50,8 @@ async function callGemini(p:any, apiKey:string, input:RunAIInput):Promise<string
           ? {responseMimeType:"application/json",responseSchema:geminiSchema(input.schema)}
           : undefined
       }),
-      cache:"no-store"
+      cache:"no-store",
+      signal:AbortSignal.timeout(10000)
     }
   );
   const raw=await response.text();
@@ -75,7 +76,8 @@ async function callOpenAICompatible(p:any, apiKey:string, input:RunAIInput):Prom
     method:"POST",
     headers:{"Authorization":"Bearer "+apiKey,"Content-Type":"application/json"},
     body:JSON.stringify(body),
-    cache:"no-store"
+    cache:"no-store",
+    signal:AbortSignal.timeout(10000)
   });
   const raw=await response.text();
   if(!response.ok) throw new Error(`HTTP ${response.status}: ${raw.slice(0,240)}`);
