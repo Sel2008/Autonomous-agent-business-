@@ -281,9 +281,12 @@ export async function POST(req: Request) {
       "bootstrap_tasks?status=eq.READY&select=*,bootstrap_opportunities(*)&order=created_at.asc"
     ).catch(()=>[]);
     const executionResults:any[] = [];
+    let externalTaskAttempts = 0;
 
-    // Claim at most one external task per invocation to avoid a long batch timing out.
-    for (const task of (Array.isArray(executionCandidates) ? executionCandidates : []).slice(0,1)) {
+    // Inspect every READY task so a manual-only task at the head of the queue
+    // cannot starve later opportunities. Keep actual provider calls bounded to
+    // one per heartbeat to protect the serverless time budget.
+    for (const task of (Array.isArray(executionCandidates) ? executionCandidates : [])) {
       const op = task?.bootstrap_opportunities as BootstrapOpportunity | undefined;
       if (!op) continue;
 
@@ -301,6 +304,14 @@ export async function POST(req: Request) {
         continue;
       }
 
+      if (externalTaskAttempts >= 1) {
+        executionResults.push({
+          taskId:String(task.id),
+          status:"DEFERRED",
+          reason:"Another eligible provider task already used this heartbeat's execution allowance."
+        });
+        continue;
+      }
       try {
         // Claim atomically in Postgres before calling the external provider.
         // If another heartbeat already claimed this task, do not execute it again.
@@ -318,6 +329,7 @@ export async function POST(req: Request) {
           continue;
         }
 
+        externalTaskAttempts += 1;
         const result = await adapter.execute(op);
 
         if ("reason" in result) {
