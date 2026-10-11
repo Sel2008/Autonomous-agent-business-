@@ -312,8 +312,6 @@ export async function POST(req: Request) {
         });
         continue;
       }
-      externalTaskAttempts += 1;
-
       try {
         // Claim atomically in Postgres before calling the external provider.
         // If another heartbeat already claimed this task, do not execute it again.
@@ -331,6 +329,7 @@ export async function POST(req: Request) {
           continue;
         }
 
+        externalTaskAttempts += 1;
         const result = await adapter.execute(op);
 
         if ("reason" in result) {
