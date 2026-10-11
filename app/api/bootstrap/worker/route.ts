@@ -291,15 +291,26 @@ export async function POST(req: Request) {
       if (!op) continue;
 
       const adapter = adapterFor(op);
-      if (!adapter || !op.automation_allowed || op.status !== "READY") {
+      const executionBlockReason = !adapter
+        ? "No explicit provider execution adapter is installed."
+        : op.upfront_cost !== 0
+          ? "Execution requires a verified zero-upfront-cost opportunity."
+          : !op.automation_allowed
+            ? "Provider automation permission is not verified."
+            : !op.eligibility_verified
+              ? "Provider eligibility is not verified."
+              : !op.payout_verified || !(Number(op.estimated_payout) > 0)
+                ? "A concrete positive payout is not verified."
+                : op.risk_status !== "PASS"
+                  ? "Opportunity risk checks have not passed."
+                  : op.status !== "READY"
+                    ? "Opportunity is not autonomous-ready."
+                    : null;
+      if (executionBlockReason) {
         executionResults.push({
           taskId:String(task.id),
           status:"NOT_EXECUTED",
-          reason: !adapter
-            ? "No explicit provider execution adapter is installed."
-            : !op.automation_allowed
-              ? "Provider automation permission is not verified."
-              : "Opportunity is not autonomous-ready."
+          reason:executionBlockReason
         });
         continue;
       }
